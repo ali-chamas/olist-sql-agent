@@ -1,0 +1,38 @@
+[project]
+name = "olist-sql-agent"
+version = "0.2.0"
+description = "Text-to-SQL agent with guardrails and an evaluation suite, on the Olist e-commerce dataset."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ali Chamas" }]
+dependencies = [
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+data = ["openpyxl>=3.1"]
+dev = ["pytest>=8", "ruff>=0.6", "openpyxl>=3.1"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sqlagent = ["static/*.html", "static/*.css", "static/js/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

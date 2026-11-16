@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# secrets
+.env
+
+# data is rebuilt with scripts/build_db.py
+data/*.db
+data/*.db.tmp
+data/*.xlsx
