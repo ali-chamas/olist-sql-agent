@@ -214,7 +214,25 @@ export function timeAgo(iso, now = Date.now()) {
 
 /** The parts of a route hash: "#/d/d_123" -> ["d", "d_123"]. */
 export function parseRoute(hash) {
-  return String(hash || "").replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  return String(hash || "").replace(/^#\/?/, "").split("?")[0].split("/").filter(Boolean).map(decodeURIComponent);
+}
+
+/** The filters in a route's query string: "#/d/d_1?state=SP" -> { state: "SP" }. */
+export function routeFilters(hash) {
+  const query = String(hash || "").split("?")[1] || "";
+  return cleanFilters(Object.fromEntries(new URLSearchParams(query)));
+}
+
+/**
+ * Which dashboard filter a bar chart's labels can set: "state" for customer states,
+ * "category" for product categories, or null. Only exact values the filter knows count.
+ */
+export function filterFor(chart, options) {
+  if (chart?.type !== "bar" || !options) return null;
+  const name = String(chart.x || "").toLowerCase();
+  if (/(^|_)(customer_)?state$/.test(name) && chart.labels.every((l) => options.states.includes(l))) return "state";
+  if (/(^|_)category$/.test(name) && chart.labels.every((l) => options.categories.includes(l))) return "category";
+  return null;
 }
 
 /** What to show while the HTTP client backs off from the provider. */

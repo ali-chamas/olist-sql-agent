@@ -4,7 +4,7 @@ import { addTile, createDashboard, getSchema, getStatus, listDashboards } from "
 import { createAskView } from "./ask.js";
 import { createOverviewView } from "./boards.js";
 import { clear, el, icon } from "./dom.js";
-import { parseRoute, shorten } from "./lib.js";
+import { parseRoute, routeFilters, shorten } from "./lib.js";
 import { clearHistory, clearPins, getHistory, getPins, getTheme, setTheme } from "./store.js";
 import { createPalette } from "./palette.js";
 import { toast } from "./toast.js";
@@ -114,7 +114,7 @@ function render() {
     window.scrollTo(0, 0);
   }
   if (route.view === "board") {
-    view.show(route.id, boardOptions || {});
+    view.show(route.id, { filters: routeFilters(location.hash), ...(boardOptions || {}) });
     boardOptions = null;
   }
   else {

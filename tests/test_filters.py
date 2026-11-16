@@ -111,3 +111,17 @@ def test_filters_over_http(db: ReadOnlyDatabase, tmp_path) -> None:
     assert history[0]["summary"] == "Set the filters to 2017-01 to end, customer state SP"
     assert asgi_request(app, "PATCH", f"/api/dashboards/{board['id']}", {"filters": {"state": "ZZ"}})[0] == 422
     ws.close()
+
+
+def test_tile_results_are_cached_per_filter(db: ReadOnlyDatabase, tmp_path) -> None:
+    ws = Workspace(tmp_path / "app.db")
+    app = create_app(SQLAgent(None, db), AppConfig(), ws)
+    board = asgi_request(app, "POST", "/api/dashboards", {"title": "Sales"})[1]
+    board = asgi_request(app, "POST", f"/api/dashboards/{board['id']}/tiles", {"title": "Totals", "sql": ORDERS})[1]
+    url = f"/api/dashboards/{board['id']}/tiles/{board['tiles'][0]['id']}/data"
+    first = asgi_request(app, "GET", url)[1]
+    again = asgi_request(app, "GET", url)[1]
+    other = asgi_request(app, "GET", url + "?state=RJ")[1]
+    assert "cached" not in first and again["cached"] is True and again["rows"] == first["rows"]
+    assert "cached" not in other and other["rows"] != first["rows"]
+    ws.close()

@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -58,6 +60,32 @@ from .workspace import (
 )
 
 MAX_PROMPT = 1000
+TILE_CACHE_ENTRIES = 512
+
+
+class ResultCache:
+    """Tile results by (SQL, chart, filters). The data is read-only, so entries never go stale."""
+
+    def __init__(self, size: int = TILE_CACHE_ENTRIES) -> None:
+        self.size = size
+        self._items: OrderedDict[tuple, Any] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple) -> Any:
+        with self._lock:
+            if key in self._items:
+                self._items.move_to_end(key)
+                return self._items[key]
+        return None
+
+    def put(self, key: tuple, value: Any) -> None:
+        with self._lock:
+            self._items[key] = value
+            self._items.move_to_end(key)
+            while len(self._items) > self.size:
+                self._items.popitem(last=False)
+
+
 Json = dict[str, Any]
 
 
@@ -126,6 +154,7 @@ def workspace_routes(
             return error(str(exc), 422)
 
     options_cache: list[FilterOptions] = []
+    results = ResultCache()
 
     def options() -> FilterOptions:
         if not options_cache:
@@ -252,6 +281,10 @@ def workspace_routes(
             if tile.chart == TEXT:
                 return {"text": tile.note, "chart": {"type": TEXT}, "columns": [], "rows": []}
             chosen = filters_from(request.query_params)
+            key = (tile.sql, tile.chart, tuple(sorted(chosen.to_dict().items())))
+            cached = results.get(key)
+            if cached is not None:
+                return {**cached, "cached": True}
             try:
                 result = db.execute(apply_filters(tile.sql, chosen))
             except QueryError as exc:
@@ -266,7 +299,7 @@ def workspace_routes(
                     chart = suggest_chart(result.columns, result.rows)
                     reason = "With these filters, the result" if chosen.active else "This result"
                     warning = f"{reason} does not fit a {tile.chart} chart, so it is shown automatically."
-            return {
+            payload = {
                 "columns": result.columns,
                 "rows": [list(r) for r in result.rows],
                 "truncated": result.truncated,
@@ -274,6 +307,8 @@ def workspace_routes(
                 "warning": warning,
                 "elapsed_ms": result.elapsed_ms,
             }
+            results.put(key, payload)
+            return payload
 
         result = await guarded(work)
         return result if isinstance(result, JSONResponse) else as_json(result)

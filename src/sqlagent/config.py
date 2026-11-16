@@ -125,4 +125,5 @@ def app_config() -> AppConfig:
         cache_ttl_s=float(os.environ.get("CACHE_TTL_S", "86400")),
         trust_proxy=_flag("TRUST_PROXY"),
         warm_up=True,
+        password=os.environ.get("APP_PASSWORD", ""),
     )

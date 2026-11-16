@@ -192,3 +192,14 @@ test("axisLabels shows the year only where it changes", async () => {
   assert.deepEqual(axisLabels(labels, [0, 2, 4]), ["Nov 2017", "Jan 2018", "Mar"]);
   assert.deepEqual(axisLabels(["2016", "2017"], [0, 1]), ["2016", "2017"]);
 });
+
+test("routes carry filters and bars know which filter they set", async () => {
+  const lib = await import("../../src/sqlagent/static/js/lib.js");
+  assert.deepEqual(lib.parseRoute("#/d/d_1?state=SP"), ["d", "d_1"]);
+  assert.deepEqual(lib.routeFilters("#/d/d_1?state=SP&date_from=2018-01&junk=1"), { date_from: "2018-01", state: "SP" });
+  const options = { states: ["RJ", "SP"], categories: ["Toys"] };
+  assert.equal(lib.filterFor({ type: "bar", x: "state", labels: ["SP", "RJ"] }, options), "state");
+  assert.equal(lib.filterFor({ type: "bar", x: "category", labels: ["Toys"] }, options), "category");
+  assert.equal(lib.filterFor({ type: "bar", x: "city and state", labels: ["Sao Paulo, SP"] }, options), null);
+  assert.equal(lib.filterFor({ type: "line", x: "state", labels: ["SP"] }, options), null);
+});

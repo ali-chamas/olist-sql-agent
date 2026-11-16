@@ -3,9 +3,9 @@
 
 import * as api from "./api.js";
 import { renderFigure } from "./charts.js";
-import { clear, download, el, icon, toolButton } from "./dom.js";
+import { clear, copyText, download, el, icon, toolButton } from "./dom.js";
 import { createFilterBar } from "./filterbar.js";
-import { cleanFilters, describePeriod, describeStep, filterQuery, formatElapsed, sameFilters, shorten, slugify, timeAgo, toCSV, waitingText } from "./lib.js";
+import { cleanFilters, describePeriod, describeStep, filterFor, filterQuery, formatElapsed, sameFilters, shorten, slugify, timeAgo, toCSV, waitingText } from "./lib.js";
 import { openMenu } from "./menu.js";
 import { toast } from "./toast.js";
 
@@ -286,10 +286,7 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
   const more = el("button", { type: "button", class: "tool", "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": "More dashboard actions" }, [icon("more"), el("span", { class: "tool-label", text: "More" })]);
   const exitPresent = el("button", { type: "button", class: "button button-secondary present-exit", text: "Exit presentation", onclick: () => setPresenting(false) });
   const filterBar = createFilterBar({
-    onChange: (filters) => {
-      active = filters;
-      renderTiles();
-    },
+    onChange: (filters) => setActive(filters),
     onSave: (filters) => apply(api.updateDashboard(board.id, { filters, version: board.version }), `Saved the filters as this dashboard's default`),
   });
   const history = el("section", { class: "history", hidden: true, "aria-label": "Version history" });
@@ -336,7 +333,19 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
   let active = {}; // filters on screen; the dashboard's saved filters are board.filters
   let changedTiles = [];
   let badge = "Changed by AI";
-  api.getFilterOptions().then(filterBar.setOptions).catch(() => { filterBar.node.hidden = true; });
+  let options = null;
+  api.getFilterOptions().then((loaded) => { options = loaded; filterBar.setOptions(loaded); }).catch(() => { filterBar.node.hidden = true; });
+
+  /** Change the filters on screen, keep them in the address so the view can be shared. */
+  function setActive(filters) {
+    active = cleanFilters(filters);
+    filterBar.set(active, board?.filters || {});
+    if (board) {
+      const query = filterQuery(active);
+      window.history.replaceState(null, "", `#/d/${encodeURIComponent(board.id)}${query ? `?${query}` : ""}`);
+    }
+    renderTiles();
+  }
 
   // ------------------------------------------------------------- loading
 
@@ -355,6 +364,8 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
     }
     try {
       render(await api.getDashboard(id), options.highlight || []);
+      // A link that carries filters shows them, whatever the saved defaults are.
+      if (options.filters && Object.keys(options.filters).length && !sameFilters(options.filters, active)) setActive(options.filters);
       if (options.focusTitle) {
         title.focus();
         title.select();
@@ -437,7 +448,22 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
           el("p", { class: "tile-empty-title", text: "No data for these filters" }),
           el("p", { class: "tile-empty-text", text: `${describePeriod(active)}${active.state ? `, ${active.state}` : ""}${active.category ? `, ${active.category}` : ""}` }),
         ]));
-      } else figure = renderFigure(payload, { title: tile.title, note: payload.warning || tile.note, tools: [ai, moreButton], className: "tile" });
+      } else {
+        figure = renderFigure(payload, { title: tile.title, note: payload.warning || tile.note, tools: [ai, moreButton], className: "tile" });
+        const key = filterFor(payload.chart, options);
+        if (key) {
+          // Click a bar to filter the whole dashboard by it, like a cross-filter.
+          figure.classList.add("bars-filter");
+          figure.addEventListener("click", (event) => {
+            const row = event.target.closest(".bar-row");
+            if (row) filterBy(key, row.dataset.label);
+          });
+          figure.addEventListener("keydown", (event) => {
+            const row = event.target.closest(".bar-row");
+            if (row && event.key === "Enter") filterBy(key, row.dataset.label);
+          });
+        }
+      }
       if (changed) {
         figure.classList.add("tile-changed");
         figure.prepend(el("span", { class: "tile-badge", text: badge }));
@@ -460,6 +486,14 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
         .catch((err) => { if (slot.isConnected) draw({ error: err.message }); });
     }
     return slot;
+  }
+
+  function filterBy(key, value) {
+    const previous = { ...active };
+    const next = { ...active, [key]: active[key] === value ? "" : value };
+    setActive(next);
+    const label = key === "state" ? `state ${value}` : value;
+    toast(next[key] ? `Filtered the dashboard to ${label}` : `Removed the ${key} filter`, { label: "Undo", run: () => setActive(previous) });
   }
 
   function textTile(tile, index, changed) {
@@ -768,6 +802,7 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
           toast(err.message);
         }
       } },
+      { label: "Copy link to this view", onSelect: async () => toast((await copyText(location.href)) ? "Copied a link with the current filters" : "Could not copy the link") },
       { label: "Present full screen", onSelect: () => setPresenting(true) },
       { label: "Print or save as PDF", onSelect: () => window.print() },
       "separator",

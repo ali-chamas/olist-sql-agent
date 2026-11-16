@@ -700,3 +700,7 @@ body.presenting .board-tiles .tile .figure-head { cursor: auto; }
 .board-tiles .tile-slot > .figure:only-child { display: flex; flex-direction: column; }
 .board-tiles .tile .figure-body { flex: 1; display: flex; flex-direction: column; }
 .board-tiles .tile .figure-body > .stats { margin: auto 0; }
+
+/* Bars that filter the dashboard when clicked. */
+.bars-filter .bar-row { cursor: pointer; }
+.bars-filter .bar-row:hover .bar-label { text-decoration: underline; text-underline-offset: 3px; }

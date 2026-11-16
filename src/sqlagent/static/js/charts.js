@@ -85,7 +85,7 @@ function renderBars(chart) {
     const fill = el("span", { class: "bar-fill" });
     fill.style.setProperty("--share", Math.max(0.004, value / max).toFixed(4));
     fill.style.setProperty("--i", i);
-    const row = el("li", { class: "bar-row", tabIndex: 0, "aria-label": `${label}: ${exact}` }, [
+    const row = el("li", { class: "bar-row", tabIndex: 0, "aria-label": `${label}: ${exact}`, "data-label": label }, [
       el("span", { class: "bar-label", text: shorten(label, 34), title: label }),
       el("span", { class: "bar-track" }, [fill, el("span", { class: "bar-value", text: formatValue(value, chart.format) })]),
     ]);

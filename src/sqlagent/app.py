@@ -15,6 +15,9 @@ answer cache and a daily token budget, so a public demo cannot drain the key.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import hmac
 import json
 import threading
 from dataclasses import dataclass
@@ -86,6 +89,47 @@ class SecurityHeaders:
         await self.app(scope, receive, send_with_headers)
 
 
+class PasswordGate:
+    """Optional HTTP Basic authentication for a private deployment (APP_PASSWORD).
+
+    Any user name is accepted; the password is compared in constant time. The health check
+    stays open so a hosting platform can probe it. Pure ASGI, so streams are not buffered.
+    """
+
+    def __init__(self, app: ASGIApp, password: str) -> None:
+        self.app = app
+        self.password = password.encode()
+
+    def allowed(self, scope: Scope) -> bool:
+        if scope.get("path") == "/api/health":
+            return True
+        for name, value in scope.get("headers", []):
+            if name == b"authorization" and value[:6].lower() == b"basic ":
+                try:
+                    decoded = base64.b64decode(value[6:], validate=True)
+                except (binascii.Error, ValueError):
+                    return False
+                _, _, given = decoded.partition(b":")
+                return hmac.compare_digest(given, self.password)
+        return False
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or self.allowed(scope):
+            await self.app(scope, receive, send)
+            return
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [
+                    (b"www-authenticate", b'Basic realm="Ask Olist", charset="UTF-8"'),
+                    (b"content-type", b"application/json"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": b'{"error": "This workspace needs a password."}'})
+
+
 @dataclass
 class AppConfig:
     ask_per_minute: int = 10
@@ -95,6 +139,7 @@ class AppConfig:
     cache_entries: int = 500
     trust_proxy: bool = False  # read the client address from X-Forwarded-For
     warm_up: bool = False  # pre-build the dashboards in a background thread at start-up
+    password: str = ""  # when set, every page and API call needs it (HTTP Basic)
 
 
 def error(message: str, status: int) -> JSONResponse:
@@ -323,6 +368,8 @@ def create_app(agent: SQLAgent, config: AppConfig | None = None, workspace: Work
         ]
     )
     app.add_middleware(SecurityHeaders)
+    if config.password:
+        app.add_middleware(PasswordGate, password=config.password)
     return app
 
 

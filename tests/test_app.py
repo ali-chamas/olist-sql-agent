@@ -198,3 +198,20 @@ def test_status_schema_static_files_and_security_headers(db: ReadOnlyDatabase) -
     assert status == 200 and "javascript" in headers["content-type"] and headers["cache-control"] == "no-cache"
     assert "cache-control" not in asgi_request(app, "GET", "/api/status", raw=True)[1]
     assert asgi_request(app, "GET", "/static/../config.py")[0] == 404
+
+
+def test_password_gate_protects_everything_but_the_health_check(db) -> None:
+    import base64
+
+    from sqlagent.agent import SQLAgent
+    from sqlagent.app import AppConfig, create_app
+
+    app = create_app(SQLAgent(FakeLLM([]), db), AppConfig(password="s3cret"))
+    status, _ = asgi_request(app, "GET", "/api/schema")
+    assert status == 401
+    assert asgi_request(app, "GET", "/api/health")[0] == 200
+    good = {"authorization": "Basic " + base64.b64encode(b"marketing:s3cret").decode()}
+    bad = {"authorization": "Basic " + base64.b64encode(b"marketing:nope").decode()}
+    assert asgi_request(app, "GET", "/api/schema", headers=good)[0] == 200
+    assert asgi_request(app, "GET", "/api/schema", headers=bad)[0] == 401
+    assert asgi_request(app, "GET", "/api/schema", headers={"authorization": "Basic !!!"})[0] == 401
