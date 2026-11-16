@@ -153,11 +153,56 @@ The dashboard agent never writes to a database. It gets the dashboard as JSON an
 
 Opening a dashboard reruns each tile's SQL through the guardrails and costs no model tokens. The trade-off: no accounts, so anyone with the URL can edit; history makes every change reversible.
 
+## 17. Filters shadow the tables instead of rewriting each query
+
+A dashboard filter has to apply to SQL the model wrote, in any shape: joins, subqueries, its own `WITH` clauses. Parsing and rewriting that SQL would be fragile. Instead the filter puts common table expressions with the same names as the tables in front of the query:
+
+```sql
+WITH sales AS (SELECT * FROM main.sales WHERE order_date >= '2018-01-01' AND order_date < '2018-09-01'
+                 AND customer_key IN (SELECT customer_key FROM main.customers WHERE state = 'SP')),
+     customers AS (SELECT * FROM main.customers WHERE state = 'SP')
+SELECT ... the tile's SQL, unchanged ...
+```
+
+SQLite resolves an unqualified name to a CTE before a table, and `main.sales` always means the real table, so every reference in the tile reads the filtered rows. A tile that already has its own `WITH` gets the filter CTEs merged into the same clause.
+
+- **Values never arrive as text.** A month must match `YYYY-MM`; a state or category must be one of the values read from the data at start-up. Only then is it written as a quoted literal. The executor takes no parameters, so this check is what makes the literal safe, and the tests try the usual injections.
+- **The guardrails still apply**: the shadowing CTEs are part of one read-only `SELECT`, compiled under the same authorizer.
+- **The tile's own conditions still apply.** A tile fixed to 2017 shows nothing when the dashboard is filtered to 2018, which is the correct answer and is shown as "No data for these filters", not as an error.
+- The trade-off: the filters know this schema's three dimensions. A different database needs its own definitions in `filters.py`.
+
+Filters live in the address (`#/d/<id>?state=SP`), so a filtered view can be shared. Saved filters are the dashboard's default and are versioned like any other change. Clicking a bar of states or categories sets that filter, which gives cross-filtering without any per-chart configuration.
+
+## 18. A model that answers in prose, or not at all, is a normal case
+
+Free-tier models fail in ways that are not errors: an empty turn after spending the whole completion budget on reasoning, a tool call the provider rejects, or a closing message written as prose instead of a `finish` call. Each one used to cost a model call and leave a spinner on the page.
+
+- A **prose reply after changes** is taken as the closing summary. Before any change it gets one reminder, then it is taken as the answer (often an explanation of why the request cannot be done).
+- An **empty or rejected turn** gets a reminder. Three in a row stop the run: changes already made are kept; otherwise the person is told the model failed.
+- The page shows **one** pending step at a time, and relabels it ("The model's reply was not a valid change; asking again") instead of adding another spinner.
+- **Rate-limit waits are visible.** The HTTP client reports each backoff through a context variable (`report_waits`), so the agent can stream "waiting 12 s" without the client knowing about agents or pages.
+
+## 19. The dashboard is drawn while the agent works
+
+The agent already runs every tile's SQL to validate it, so it costs nothing to send the result along. Each successful change emits the draft's layout and, for a new or changed tile, the rows and chart. The page draws the draft live: on the dashboards page while building, and in place while editing. Unchanged tiles are left in the DOM, not re-inserted, so their charts do not replay their entrance animation; the newest tile is marked with the highlighter. If the run fails or is stopped, the saved dashboard is drawn again.
+
+This changes how the wait feels: a 20-second run on a free model becomes a dashboard assembling itself, instead of a spinner.
+
+## 20. Tile results are cached; the workspace can be locked
+
+The business data is read-only, so a tile's result depends only on its SQL, its chart type and the filters. Those three are the cache key, and entries never go stale. Opening a dashboard twice, or switching back to a filter already seen, does not touch the database.
+
+`APP_PASSWORD` turns on HTTP Basic authentication for every page and API call, compared in constant time, with the health check left open for the hosting platform. It is deliberately the smallest thing that makes a private deployment private; accounts and per-dashboard permissions are a different product.
+
+## 21. The frontend is a product shell, still without a build step
+
+The sidebar lists the saved dashboards; Ctrl+K (Cmd+K on a Mac) opens a command palette that jumps to any dashboard or page, or turns what was typed into a question or a new dashboard. Dashboard cards draw a thumbnail of their layout from the tiles' chart types. All of it is plain ES modules, so the page still loads with no bundler, and the Content-Security-Policy still allows only same-origin scripts.
+
 ## Next steps
 
 1. Record the score for two or three models and track it per commit.
 2. Add multi-turn cases to the eval; follow-up questions are not scored yet.
 3. Add retrieval of similar solved questions as few-shot examples, and measure the gain.
-4. Move to PostgreSQL with a read-only role, and compare dialect errors; this is also the path to connecting a team's own database.
-5. Dashboard-wide filters (date range, state) applied to every tile.
+4. Move to PostgreSQL with a read-only role, and compare dialect errors; this is also the path to connecting a team's own database, with filter definitions read from a config file.
+5. Record the dashboard eval for two or three models, and add cases written by marketing people.
 6. Add questions written by other people to reduce author bias in the eval.

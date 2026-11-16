@@ -1,0 +1,371 @@
+{
+ "description": "Requests for the dashboard agent, with the checks any good result must pass. See src/sqlagent/dashboard_eval.py.",
+ "cases": [
+  {
+   "id": "b01",
+   "category": "build",
+   "request": "Marketing overview: revenue trend, top categories, repeat customers and payment mix",
+   "min_tiles": 4,
+   "max_tiles": 9,
+   "charts": [
+    "kpi",
+    "line",
+    "bar"
+   ],
+   "topics": [
+    "revenue",
+    "categor",
+    "repeat",
+    "payment"
+   ]
+  },
+  {
+   "id": "b02",
+   "category": "build",
+   "request": "Delivery performance: late-delivery rate by customer state and how delays affect review scores",
+   "min_tiles": 3,
+   "max_tiles": 9,
+   "charts": [
+    "bar"
+   ],
+   "topics": [
+    "late|delay",
+    "state",
+    "review"
+   ]
+  },
+  {
+   "id": "b03",
+   "category": "build",
+   "request": "Category deep dive for 2018: revenue, orders and average order value by product category",
+   "min_tiles": 3,
+   "max_tiles": 9,
+   "topics": [
+    "categor",
+    "revenue",
+    "order"
+   ]
+  },
+  {
+   "id": "b04",
+   "category": "build",
+   "request": "Seller performance: top sellers by revenue, where sellers are based, and the average review per seller",
+   "min_tiles": 3,
+   "max_tiles": 9,
+   "topics": [
+    "seller",
+    "revenue",
+    "review|state"
+   ]
+  },
+  {
+   "id": "b05",
+   "category": "build",
+   "request": "Customer retention: how many customers come back, and how repeat orders change over time",
+   "min_tiles": 2,
+   "max_tiles": 9,
+   "charts": [
+    "line"
+   ],
+   "topics": [
+    "repeat|returning|cohort"
+   ]
+  },
+  {
+   "id": "b06",
+   "category": "build",
+   "request": "A one-page executive summary of the marketplace for the board",
+   "min_tiles": 3,
+   "max_tiles": 9,
+   "charts": [
+    "kpi"
+   ],
+   "topics": [
+    "revenue"
+   ]
+  },
+  {
+   "id": "f01",
+   "category": "filters",
+   "request": "Show only Sao Paulo customers, from January 2018",
+   "start": [
+    {
+     "title": "Totals",
+     "sql": "SELECT ROUND(SUM(revenue), 2) AS revenue, COUNT(DISTINCT order_id) AS orders FROM sales",
+     "chart": "kpi",
+     "size": "full"
+    },
+    {
+     "title": "Revenue by month",
+     "sql": "SELECT strftime('%Y-%m', order_date) AS month, ROUND(SUM(revenue), 2) AS revenue FROM sales WHERE order_date >= '2017-01-01' AND order_date < '2018-09-01' GROUP BY month ORDER BY month",
+     "chart": "line",
+     "size": "full"
+    },
+    {
+     "title": "Orders by payment type",
+     "sql": "SELECT payment_type, COUNT(DISTINCT order_id) AS orders FROM sales WHERE payment_type IS NOT NULL GROUP BY payment_type ORDER BY orders DESC",
+     "chart": "bar"
+    },
+    {
+     "title": "Top categories by revenue",
+     "sql": "SELECT p.category, ROUND(SUM(s.revenue), 2) AS revenue FROM sales s JOIN products p ON p.product_id = s.product_id GROUP BY p.category ORDER BY revenue DESC LIMIT 10",
+     "chart": "bar"
+    }
+   ],
+   "min_tiles": 4,
+   "filters": {
+    "state": "SP",
+    "date_from": "2018-01"
+   },
+   "kept": [
+    "Totals",
+    "Revenue by month"
+   ]
+  },
+  {
+   "id": "f02",
+   "category": "filters",
+   "request": "Limit the whole dashboard to the Health Beauty category",
+   "start": [
+    {
+     "title": "Totals",
+     "sql": "SELECT ROUND(SUM(revenue), 2) AS revenue, COUNT(DISTINCT order_id) AS orders FROM sales",
+     "chart": "kpi",
+     "size": "full"
+    },
+    {
+     "title": "Revenue by month",
+     "sql": "SELECT strftime('%Y-%m', order_date) AS month, ROUND(SUM(revenue), 2) AS revenue FROM sales WHERE order_date >= '2017-01-01' AND order_date < '2018-09-01' GROUP BY month ORDER BY month",
+     "chart": "line",
+     "size": "full"
+    },
+    {
+     "title": "Orders by payment type",
+     "sql": "SELECT payment_type, COUNT(DISTINCT order_id) AS orders FROM sales WHERE payment_type IS NOT NULL GROUP BY payment_type ORDER BY orders DESC",
+     "chart": "bar"
+    },
+    {
+     "title": "Top categories by revenue",
+     "sql": "SELECT p.category, ROUND(SUM(s.revenue), 2) AS revenue FROM sales s JOIN products p ON p.product_id = s.product_id GROUP BY p.category ORDER BY revenue DESC LIMIT 10",
+     "chart": "bar"
+    }
+   ],
+   "min_tiles": 4,
+   "filters": {
+    "category": "Health Beauty"
+   }
+  },
+  {
+   "id": "e01",
+   "category": "edit",
+   "request": "Remove the payment chart and add revenue by customer state",
+   "start": [
+    {
+     "title": "Totals",
+     "sql": "SELECT ROUND(SUM(revenue), 2) AS revenue, COUNT(DISTINCT order_id) AS orders FROM sales",
+     "chart": "kpi",
+     "size": "full"
+    },
+    {
+     "title": "Revenue by month",
+     "sql": "SELECT strftime('%Y-%m', order_date) AS month, ROUND(SUM(revenue), 2) AS revenue FROM sales WHERE order_date >= '2017-01-01' AND order_date < '2018-09-01' GROUP BY month ORDER BY month",
+     "chart": "line",
+     "size": "full"
+    },
+    {
+     "title": "Orders by payment type",
+     "sql": "SELECT payment_type, COUNT(DISTINCT order_id) AS orders FROM sales WHERE payment_type IS NOT NULL GROUP BY payment_type ORDER BY orders DESC",
+     "chart": "bar"
+    },
+    {
+     "title": "Top categories by revenue",
+     "sql": "SELECT p.category, ROUND(SUM(s.revenue), 2) AS revenue FROM sales s JOIN products p ON p.product_id = s.product_id GROUP BY p.category ORDER BY revenue DESC LIMIT 10",
+     "chart": "bar"
+    }
+   ],
+   "min_tiles": 4,
+   "max_tiles": 5,
+   "removed": [
+    "Orders by payment type"
+   ],
+   "kept": [
+    "Totals",
+    "Revenue by month"
+   ],
+   "topics": [
+    "state"
+   ]
+  },
+  {
+   "id": "e02",
+   "category": "edit",
+   "request": "Show this as a table instead",
+   "start": [
+    {
+     "title": "Totals",
+     "sql": "SELECT ROUND(SUM(revenue), 2) AS revenue, COUNT(DISTINCT order_id) AS orders FROM sales",
+     "chart": "kpi",
+     "size": "full"
+    },
+    {
+     "title": "Revenue by month",
+     "sql": "SELECT strftime('%Y-%m', order_date) AS month, ROUND(SUM(revenue), 2) AS revenue FROM sales WHERE order_date >= '2017-01-01' AND order_date < '2018-09-01' GROUP BY month ORDER BY month",
+     "chart": "line",
+     "size": "full"
+    },
+    {
+     "title": "Orders by payment type",
+     "sql": "SELECT payment_type, COUNT(DISTINCT order_id) AS orders FROM sales WHERE payment_type IS NOT NULL GROUP BY payment_type ORDER BY orders DESC",
+     "chart": "bar"
+    },
+    {
+     "title": "Top categories by revenue",
+     "sql": "SELECT p.category, ROUND(SUM(s.revenue), 2) AS revenue FROM sales s JOIN products p ON p.product_id = s.product_id GROUP BY p.category ORDER BY revenue DESC LIMIT 10",
+     "chart": "bar"
+    }
+   ],
+   "focus": "Top categories by revenue",
+   "min_tiles": 4,
+   "max_tiles": 4,
+   "charts": [
+    "table",
+    "line",
+    "kpi"
+   ]
+  },
+  {
+   "id": "e03",
+   "category": "edit",
+   "request": "Add a short heading at the top explaining that revenue includes freight",
+   "start": [
+    {
+     "title": "Totals",
+     "sql": "SELECT ROUND(SUM(revenue), 2) AS revenue, COUNT(DISTINCT order_id) AS orders FROM sales",
+     "chart": "kpi",
+     "size": "full"
+    },
+    {
+     "title": "Revenue by month",
+     "sql": "SELECT strftime('%Y-%m', order_date) AS month, ROUND(SUM(revenue), 2) AS revenue FROM sales WHERE order_date >= '2017-01-01' AND order_date < '2018-09-01' GROUP BY month ORDER BY month",
+     "chart": "line",
+     "size": "full"
+    },
+    {
+     "title": "Orders by payment type",
+     "sql": "SELECT payment_type, COUNT(DISTINCT order_id) AS orders FROM sales WHERE payment_type IS NOT NULL GROUP BY payment_type ORDER BY orders DESC",
+     "chart": "bar"
+    },
+    {
+     "title": "Top categories by revenue",
+     "sql": "SELECT p.category, ROUND(SUM(s.revenue), 2) AS revenue FROM sales s JOIN products p ON p.product_id = s.product_id GROUP BY p.category ORDER BY revenue DESC LIMIT 10",
+     "chart": "bar"
+    }
+   ],
+   "min_tiles": 5,
+   "max_tiles": 5,
+   "charts": [
+    "text"
+   ],
+   "kept": [
+    "Totals"
+   ]
+  },
+  {
+   "id": "e04",
+   "category": "edit",
+   "request": "Add the average review score per month next to the revenue trend",
+   "start": [
+    {
+     "title": "Totals",
+     "sql": "SELECT ROUND(SUM(revenue), 2) AS revenue, COUNT(DISTINCT order_id) AS orders FROM sales",
+     "chart": "kpi",
+     "size": "full"
+    },
+    {
+     "title": "Revenue by month",
+     "sql": "SELECT strftime('%Y-%m', order_date) AS month, ROUND(SUM(revenue), 2) AS revenue FROM sales WHERE order_date >= '2017-01-01' AND order_date < '2018-09-01' GROUP BY month ORDER BY month",
+     "chart": "line",
+     "size": "full"
+    },
+    {
+     "title": "Orders by payment type",
+     "sql": "SELECT payment_type, COUNT(DISTINCT order_id) AS orders FROM sales WHERE payment_type IS NOT NULL GROUP BY payment_type ORDER BY orders DESC",
+     "chart": "bar"
+    },
+    {
+     "title": "Top categories by revenue",
+     "sql": "SELECT p.category, ROUND(SUM(s.revenue), 2) AS revenue FROM sales s JOIN products p ON p.product_id = s.product_id GROUP BY p.category ORDER BY revenue DESC LIMIT 10",
+     "chart": "bar"
+    }
+   ],
+   "min_tiles": 5,
+   "max_tiles": 6,
+   "topics": [
+    "review"
+   ],
+   "kept": [
+    "Revenue by month"
+   ]
+  },
+  {
+   "id": "r01",
+   "category": "refusal",
+   "request": "Add marketing spend and return on ad spend by channel",
+   "start": [
+    {
+     "title": "Totals",
+     "sql": "SELECT ROUND(SUM(revenue), 2) AS revenue, COUNT(DISTINCT order_id) AS orders FROM sales",
+     "chart": "kpi",
+     "size": "full"
+    },
+    {
+     "title": "Revenue by month",
+     "sql": "SELECT strftime('%Y-%m', order_date) AS month, ROUND(SUM(revenue), 2) AS revenue FROM sales WHERE order_date >= '2017-01-01' AND order_date < '2018-09-01' GROUP BY month ORDER BY month",
+     "chart": "line",
+     "size": "full"
+    },
+    {
+     "title": "Orders by payment type",
+     "sql": "SELECT payment_type, COUNT(DISTINCT order_id) AS orders FROM sales WHERE payment_type IS NOT NULL GROUP BY payment_type ORDER BY orders DESC",
+     "chart": "bar"
+    },
+    {
+     "title": "Top categories by revenue",
+     "sql": "SELECT p.category, ROUND(SUM(s.revenue), 2) AS revenue FROM sales s JOIN products p ON p.product_id = s.product_id GROUP BY p.category ORDER BY revenue DESC LIMIT 10",
+     "chart": "bar"
+    }
+   ],
+   "expect_cannot_do": true
+  },
+  {
+   "id": "r02",
+   "category": "refusal",
+   "request": "Delete all canceled orders from the database",
+   "start": [
+    {
+     "title": "Totals",
+     "sql": "SELECT ROUND(SUM(revenue), 2) AS revenue, COUNT(DISTINCT order_id) AS orders FROM sales",
+     "chart": "kpi",
+     "size": "full"
+    },
+    {
+     "title": "Revenue by month",
+     "sql": "SELECT strftime('%Y-%m', order_date) AS month, ROUND(SUM(revenue), 2) AS revenue FROM sales WHERE order_date >= '2017-01-01' AND order_date < '2018-09-01' GROUP BY month ORDER BY month",
+     "chart": "line",
+     "size": "full"
+    },
+    {
+     "title": "Orders by payment type",
+     "sql": "SELECT payment_type, COUNT(DISTINCT order_id) AS orders FROM sales WHERE payment_type IS NOT NULL GROUP BY payment_type ORDER BY orders DESC",
+     "chart": "bar"
+    },
+    {
+     "title": "Top categories by revenue",
+     "sql": "SELECT p.category, ROUND(SUM(s.revenue), 2) AS revenue FROM sales s JOIN products p ON p.product_id = s.product_id GROUP BY p.category ORDER BY revenue DESC LIMIT 10",
+     "chart": "bar"
+    }
+   ],
+   "expect_cannot_do": true
+  }
+ ]
+}

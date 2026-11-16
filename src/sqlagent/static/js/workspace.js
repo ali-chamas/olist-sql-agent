@@ -249,50 +249,63 @@ export function createDashboardsView({ onOpen }) {
   return { node, show, startBuild };
 }
 
+const draftSlots = new WeakMap(); // grid -> Map(tile id -> { stamp, slot }), so unchanged tiles stay where they are
+
 /**
  * Draw a dashboard the AI is still working on: its tiles in order, each with the rows the agent
  * just ran (``payloads``) or an earlier result (``fallback``), the newest one marked.
+ * Unchanged tiles are left in place, never re-inserted, so their charts do not animate again.
  */
-const draftFigures = new WeakMap(); // grid -> Map(tile id -> { stamp, figure }), so unchanged tiles are not redrawn
-
 function drawDraft(grid, draft, payloads, fallback, newest) {
   const widths = layout(draft.tiles);
-  if (!draftFigures.has(grid) || !grid.querySelector(".tile-draft")) draftFigures.set(grid, new Map());
-  const known = draftFigures.get(grid);
-  clear(grid).append(...draft.tiles.map((tile, i) => {
-    const slot = el("div", { class: widths[i] === "full" ? "tile-slot tile-wide" : "tile-slot" });
+  if (!draftSlots.has(grid) || !grid.querySelector(".tile-draft")) {
+    draftSlots.set(grid, new Map());
+    clear(grid);
+  }
+  const known = draftSlots.get(grid);
+  const wanted = draft.tiles.map((tile, i) => {
     const stamp = JSON.stringify([tile.title, tile.chart, tile.note, Boolean(payloads.get(tile.id))]);
     const reuse = known.get(tile.id);
+    let slot;
     if (reuse && reuse.stamp === stamp && tile.id !== newest) {
-      reuse.figure.classList.remove("tile-live");
-      slot.append(reuse.figure);
-      return slot;
+      slot = reuse.slot;
+      slot.firstElementChild?.classList.remove("tile-live");
+    } else {
+      slot = el("div", {}, draftFigure(tile, payloads, fallback, tile.id === newest));
+      known.set(tile.id, { stamp, slot });
     }
-    let figure;
-    if (tile.chart === "text") {
-      figure = el("section", { class: "figure tile tile-text" }, [
-        tile.title ? el("h3", { class: "text-tile-title", text: tile.title }) : null,
-        tile.note ? el("div", { class: "text-tile-body" }, tile.note.split(/\n{2,}/).map((p) => el("p", { text: p }))) : null,
+    slot.className = widths[i] === "full" ? "tile-slot tile-wide" : "tile-slot";
+    return slot;
+  });
+  wanted.forEach((slot, i) => {
+    if (grid.children[i] !== slot) grid.insertBefore(slot, grid.children[i] || null);
+  });
+  while (grid.children.length > wanted.length) grid.lastElementChild.remove();
+}
+
+function draftFigure(tile, payloads, fallback, isNewest) {
+  let figure;
+  if (tile.chart === "text") {
+    figure = el("section", { class: "figure tile tile-text" }, [
+      tile.title ? el("h3", { class: "text-tile-title", text: tile.title }) : null,
+      tile.note ? el("div", { class: "text-tile-body" }, tile.note.split(/\n{2,}/).map((p) => el("p", { text: p }))) : null,
+    ]);
+  } else {
+    const payload = payloads.get(tile.id) || fallback(tile.id);
+    if (!payload) {
+      figure = el("section", { class: "figure tile tile-loading" }, [el("h3", { class: "figure-title", text: tile.title })]);
+    } else if (payload.error || payload.chart?.type === "empty") {
+      figure = el("section", { class: "figure tile" }, [
+        el("h3", { class: "figure-title", text: tile.title }),
+        el("p", { class: "table-note", text: payload.error || "No rows yet" }),
       ]);
     } else {
-      const payload = payloads.get(tile.id) || fallback(tile.id);
-      if (!payload) {
-        figure = el("section", { class: "figure tile tile-loading" }, [el("h3", { class: "figure-title", text: tile.title })]);
-      } else if (payload.error || payload.chart?.type === "empty") {
-        figure = el("section", { class: "figure tile" }, [
-          el("h3", { class: "figure-title", text: tile.title }),
-          el("p", { class: "table-note", text: payload.error || "No rows yet" }),
-        ]);
-      } else {
-        figure = renderFigure(payload, { title: tile.title, note: tile.note, className: "tile" });
-      }
+      figure = renderFigure(payload, { title: tile.title, note: tile.note, className: "tile" });
     }
-    figure.classList.add("tile-draft");
-    if (tile.id === newest) figure.classList.add("tile-live");
-    known.set(tile.id, { stamp, figure });
-    slot.append(figure);
-    return slot;
-  }));
+  }
+  figure.classList.add("tile-draft");
+  if (isNewest) figure.classList.add("tile-live");
+  return figure;
 }
 
 /** Tell the rest of the app (the sidebar list) that dashboards were added, renamed or removed. */

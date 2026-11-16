@@ -14,3 +14,5 @@ services:
         value: "150000"      # keeps a public demo under the provider's free daily cap
       - key: TRUST_PROXY
         value: "1"
+      - key: APP_PASSWORD
+        sync: false          # optional: set it to keep the workspace private

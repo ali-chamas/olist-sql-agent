@@ -102,6 +102,36 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_eval_dashboards(args: argparse.Namespace) -> int:
+    from .builder import DashboardAgent
+    from .dashboard_eval import load_dashboard_cases, render_dashboard_report, run_dashboard_eval
+
+    cases = load_dashboard_cases(args.cases)
+    if args.only:
+        cases = [c for c in cases if c.id in set(args.only)]
+    agent = build_agent(Settings.from_env())
+    builder = DashboardAgent(agent.llm, agent.db)
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", agent.llm.model).strip("-").lower()
+    results_path = Path(args.out) / f"dashboards-{slug}.jsonl"
+
+    def progress(outcome) -> None:
+        verdict = "pass" if outcome.passed else "FAIL " + "; ".join(outcome.failures)
+        print(
+            f"{outcome.id:5} {outcome.llm_calls:>2} calls {outcome.tokens:>7} tok "
+            f"{outcome.latency_ms / 1000:5.1f} s  {verdict}",
+            flush=True,
+        )
+
+    pacer = TokenPacer(args.tpm) if args.tpm else None
+    outcomes = run_dashboard_eval(builder, cases, results_path, pacer, resume=not args.fresh, on_case=progress)
+    passed = sum(o.passed for o in outcomes)
+    print(f"\nDashboards passing every check: {passed}/{len(outcomes)}")
+    report = results_path.with_suffix(".md")
+    report.write_text(render_dashboard_report(outcomes, agent.llm.model), encoding="utf-8")
+    print(f"Report: {report}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sqlagent", description="Text-to-SQL agent for the Olist dataset.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -128,6 +158,16 @@ def main(argv: list[str] | None = None) -> int:
     evaluate.add_argument("--only", nargs="*", help="run only these case ids")
     evaluate.add_argument("--oracle", action="store_true", help="self-test with the gold SQL; no API key needed")
     evaluate.set_defaults(func=cmd_eval)
+
+    boards = sub.add_parser(
+        "eval-dashboards", help="run the dashboard agent on reference requests and check the results"
+    )
+    boards.add_argument("--cases", default=str(ROOT / "evals" / "dashboards.json"))
+    boards.add_argument("--out", default=str(ROOT / "evals" / "results"))
+    boards.add_argument("--tpm", type=int, default=0, help="tokens-per-minute budget, e.g. 8000 on Groq's free plan")
+    boards.add_argument("--fresh", action="store_true", help="ignore saved results and start over")
+    boards.add_argument("--only", nargs="*", help="run only these case ids")
+    boards.set_defaults(func=cmd_eval_dashboards)
 
     args = parser.parse_args(argv)
     try:

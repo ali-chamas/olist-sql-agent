@@ -21,4 +21,6 @@ USER app
 # The platform provides PORT; LLM_API_KEY is set as a secret, never baked in.
 ENV LLM_PROVIDER=groq TRUST_PROXY=1 DAILY_TOKEN_BUDGET=150000
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\", \"8000\")}/api/health', timeout=4)"
 CMD ["python", "-m", "sqlagent", "serve", "--host", "0.0.0.0"]

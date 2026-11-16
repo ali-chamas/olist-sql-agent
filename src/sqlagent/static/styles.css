@@ -579,7 +579,7 @@ th.num, td.num { padding-right: 0; padding-left: 12px; }
 .filter:focus-within { border-color: var(--focus); }
 .filter-label { color: var(--muted); }
 .filter-select { appearance: none; border: 0; background: transparent no-repeat right 9px center / 10px 10px; padding: 5px 26px 5px 2px; font: 600 13px/1.4 var(--sans);
-                 color: var(--ink); cursor: pointer; max-width: 220px; text-overflow: ellipsis;
+                 color: var(--ink); cursor: pointer; max-width: 190px; text-overflow: ellipsis;
                  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%23667182' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
 .filter-select:focus-visible { outline: none; }
 .filter-select option { font-weight: 400; color: initial; }
