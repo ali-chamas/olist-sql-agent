@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlagent.presentation import classify_column, result_payload, suggest_chart, value_format
+from sqlagent.presentation import chart_for, classify_column, result_payload, suggest_chart, value_format
 
 
 def test_single_value_becomes_a_stat_tile() -> None:
@@ -42,11 +42,33 @@ def test_months_become_a_line_sorted_by_time() -> None:
     assert chart["series"] == [{"name": "revenue", "format": "currency", "values": [1.0, 2.0, 3.0, 4.0]}]
 
 
-def test_line_keeps_at_most_three_series_that_share_a_unit() -> None:
+def test_line_keeps_only_series_that_share_a_unit() -> None:
     rows = [(f"2017-0{m}", m * 10.0, m * 2.0, m, m * 1.5) for m in range(1, 6)]
     chart = suggest_chart(["month", "revenue", "freight", "orders", "price"], rows)
-    # revenue and freight are both currency; orders is a count and cannot share their axis.
-    assert [s["name"] for s in chart["series"]] == ["revenue", "freight"]
+    # revenue, freight and price are currency; orders is a count and cannot share their axis.
+    assert [s["name"] for s in chart["series"]] == ["revenue", "freight", "price"]
+
+
+def test_long_results_are_pivoted_into_one_line_per_category() -> None:
+    rows = [
+        (month, name, value)
+        for month in ("2017-01", "2017-02", "2017-03", "2017-04")
+        for name, value in (("SP", 10.0), ("RJ", 5.0), ("MG", 2.0))
+    ]
+    rows.remove(("2017-02", "MG", 2.0))
+    chart = suggest_chart(["month", "state", "revenue"], rows)
+    assert chart["type"] == "line" and chart["by"] == "state"
+    assert [s["name"] for s in chart["series"]] == ["SP", "RJ", "MG"]
+    assert chart["series"][2]["values"] == [2.0, None, 2.0, 2.0]
+    assert chart_for(["month", "state", "revenue"], rows, "line")["series"][0]["name"] == "SP"
+
+
+def test_pivot_keeps_the_five_largest_and_says_so() -> None:
+    names = [f"c{i}" for i in range(8)]
+    rows = [(m, n, float(i + 1)) for m in ("2018-01", "2018-02", "2018-03", "2018-04") for i, n in enumerate(names)]
+    chart = suggest_chart(["month", "category", "revenue"], rows)
+    assert [s["name"] for s in chart["series"]] == ["c7", "c6", "c5", "c4", "c3"]
+    assert chart["note"].startswith("The 5 largest of 8 category values")
 
 
 def test_few_periods_become_bars_in_time_order() -> None:

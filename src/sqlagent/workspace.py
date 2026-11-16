@@ -37,6 +37,8 @@ MAX_TITLE = 120
 MAX_DESCRIPTION = 400
 MAX_NOTE = 240
 MAX_SQL = 4000
+MAX_TEXT = 2000  # body of a text tile
+TEXT = "text"  # the chart value of a text tile, which has no query
 TILE_PREVIEW_ROWS = 200
 
 SCHEMA = """
@@ -44,6 +46,7 @@ CREATE TABLE IF NOT EXISTS dashboards (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
+  filters TEXT NOT NULL DEFAULT '{}',
   version INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -111,6 +114,7 @@ class Dashboard:
     title: str
     description: str = ""
     tiles: list[Tile] = field(default_factory=list)
+    filters: dict[str, str] = field(default_factory=dict)
     version: int = 0
     created_at: str = ""
     updated_at: str = ""
@@ -123,7 +127,12 @@ class Dashboard:
         raise MissingTile(f"No tile with id {tile_id!r}. Tiles on this dashboard: {known}.")
 
     def snapshot(self) -> dict[str, Any]:
-        return {"title": self.title, "description": self.description, "tiles": [asdict(t) for t in self.tiles]}
+        return {
+            "title": self.title,
+            "description": self.description,
+            "filters": dict(self.filters),
+            "tiles": [asdict(t) for t in self.tiles],
+        }
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -141,6 +150,14 @@ class Workspace:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after the first release to an existing app database."""
+        columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(dashboards)")}
+        if "filters" not in columns:
+            with self._conn:
+                self._conn.execute("ALTER TABLE dashboards ADD COLUMN filters TEXT NOT NULL DEFAULT '{}'")
 
     def close(self) -> None:
         self._conn.close()
@@ -154,7 +171,14 @@ class Workspace:
                 "FROM dashboards d LEFT JOIN tiles t ON t.dashboard_id = d.id "
                 "GROUP BY d.id ORDER BY d.updated_at DESC, d.id"
             ).fetchall()
-        return [dict(r) for r in rows]
+            shapes = self._conn.execute(
+                "SELECT dashboard_id, chart, size FROM tiles ORDER BY dashboard_id, position"
+            ).fetchall()
+        layout: dict[str, list[dict[str, str]]] = {}
+        for shape in shapes:
+            layout.setdefault(shape["dashboard_id"], []).append({"chart": shape["chart"], "size": shape["size"]})
+        # The tile shapes, in order, so a list can draw a thumbnail of each dashboard.
+        return [{**dict(r), "layout": layout.get(r["id"], [])} for r in rows]
 
     def get(self, dashboard_id: str) -> Dashboard:
         with self._lock:
@@ -170,6 +194,7 @@ class Workspace:
             title=row["title"],
             description=row["description"],
             tiles=[Tile(**dict(t)) for t in tiles],
+            filters=json.loads(row["filters"] or "{}"),
             version=row["version"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -226,8 +251,9 @@ class Workspace:
                 )
             version = current + 1
             self._conn.execute(
-                "UPDATE dashboards SET title = ?, description = ?, version = ?, updated_at = ? WHERE id = ?",
-                (dashboard.title, dashboard.description, version, stamp, dashboard.id),
+                "UPDATE dashboards SET title = ?, description = ?, filters = ?, version = ?, updated_at = ? "
+                "WHERE id = ?",
+                (dashboard.title, dashboard.description, json.dumps(dashboard.filters), version, stamp, dashboard.id),
             )
             self._conn.execute("DELETE FROM tiles WHERE dashboard_id = ?", (dashboard.id,))
             self._conn.executemany(
@@ -256,7 +282,22 @@ class Workspace:
         dashboard = self.get(dashboard_id)
         dashboard.title, dashboard.description = snapshot["title"], snapshot["description"]
         dashboard.tiles = [Tile(**t) for t in snapshot["tiles"]]
+        dashboard.filters = snapshot.get("filters", {})
         return self.save(dashboard, author=author, summary=f"Restored version {version}")
+
+    def duplicate(self, dashboard_id: str, author: str = "you") -> Dashboard:
+        """A new dashboard with the same tiles and filters, titled 'Copy of ...'."""
+        source = self.get(dashboard_id)
+        title = f"Copy of {source.title}"[:MAX_TITLE]
+        copy_ = self.create(title, source.description, author=author, summary=f"Copied from “{source.title}”")
+        copy_.tiles = [Tile(**{**asdict(t), "id": new_id("t")}) for t in source.tiles]
+        copy_.filters = dict(source.filters)
+        return self.save(
+            copy_,
+            author=author,
+            summary=f"Copied {len(copy_.tiles)} tile{'' if len(copy_.tiles) == 1 else 's'}",
+            expected_version=copy_.version,
+        )
 
     def delete(self, dashboard_id: str) -> None:
         with self._lock, self._conn:
@@ -279,9 +320,25 @@ def clean_text(value: Any, limit: int, label: str) -> str:
     return text
 
 
+def clean_body(value: Any, limit: int, label: str) -> str:
+    """Multi-line text: keeps line breaks, trims each line, at most one blank line in a row."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise EditError(f"{label} must be text.")
+    lines = [" ".join(line.split()) for line in value.replace("\r\n", "\n").split("\n")]
+    text = "\n".join(lines)
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
+    text = text.strip()
+    if len(text) > limit:
+        raise EditError(f"{label} is longer than {limit} characters.")
+    return text
+
+
 @dataclass
 class Change:
-    kind: str  # added | updated | removed | moved | renamed
+    kind: str  # added | updated | removed | moved | renamed | filtered
     title: str
     tile_id: str | None = None
 
@@ -352,9 +409,39 @@ def add_tile(
     return Change("added", tile.title, tile.id)
 
 
+def add_text_tile(dashboard: Dashboard, title: Any, text: Any, size: Any = "full", position: Any = None) -> Change:
+    """A heading and short text, for sections and context. No query."""
+    if len(dashboard.tiles) >= MAX_TILES:
+        raise EditError(f"A dashboard holds at most {MAX_TILES} tiles. Remove one first.")
+    title = clean_text(title, MAX_TITLE, "Title")
+    body = clean_body(text, MAX_TEXT, "Text")
+    if not title and not body:
+        raise EditError("A text tile needs a title or some text.")
+    if size not in (None, *SIZES):
+        raise EditError("size must be 'half' or 'full'.")
+    tile = Tile(id=new_id("t"), title=title, sql="", chart=TEXT, size=size or "full", note=body)
+    dashboard.tiles.insert(_position(position, len(dashboard.tiles)), tile)
+    return Change("added", tile.title or "Text", tile.id)
+
+
 def update_tile(dashboard: Dashboard, db: ReadOnlyDatabase, tile_id: Any, **fields: Any) -> Change:
     tile = dashboard.tile(str(tile_id))
     updated = copy.copy(tile)
+    if tile.chart == TEXT:
+        if fields.get("sql") is not None or fields.get("chart") not in (None, TEXT):
+            raise EditError("A text tile has no query or chart. Remove it and add a chart tile instead.")
+        if fields.get("title") is not None:
+            updated.title = clean_text(fields["title"], MAX_TITLE, "Title")
+        if fields.get("note") is not None:
+            updated.note = clean_body(fields["note"], MAX_TEXT, "Text")
+        if fields.get("size") is not None:
+            if fields["size"] not in SIZES:
+                raise EditError("size must be 'half' or 'full'.")
+            updated.size = fields["size"]
+        if updated == tile:
+            raise EditError("Nothing to change: give at least one new value.")
+        dashboard.tiles[dashboard.tiles.index(tile)] = updated
+        return Change("updated", updated.title or "Text", updated.id)
     if fields.get("title") is not None:
         updated.title = clean_text(fields["title"], MAX_TITLE, "Title") or tile.title
     if fields.get("note") is not None:
@@ -395,6 +482,12 @@ def update_details(dashboard: Dashboard, title: Any = None, description: Any = N
     return Change("renamed", dashboard.title)
 
 
+def set_filters(dashboard: Dashboard, filters: dict[str, str], label: str) -> Change:
+    """Replace the dashboard's saved filters. ``filters`` must already be validated."""
+    dashboard.filters = {k: v for k, v in filters.items() if v}
+    return Change("filtered", label)
+
+
 def summarize(changes: list[Change]) -> str:
     """'Added 2 tiles, removed "Orders by weekday"' style summary of a set of changes."""
     if not changes:
@@ -408,5 +501,8 @@ def summarize(changes: list[Change]) -> str:
             parts.append(f"{verb} {len(items)} tiles")
     if any(c.kind == "renamed" for c in changes):
         parts.append("Renamed the dashboard")
+    filtered = [c for c in changes if c.kind == "filtered"]
+    if filtered:
+        parts.append(f"Set the filters to {filtered[-1].title}")
     text = ", ".join(parts)
     return text[0].upper() + text[1:]

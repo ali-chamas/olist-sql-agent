@@ -224,3 +224,90 @@ export function waitingText({ seconds, status }) {
     ? `The free model plan is at its per-minute limit; waiting ${s} s`
     : `The model provider is busy; trying again in ${s} s`;
 }
+
+// ------------------------------------------------------------------ filters
+
+export const FILTER_KEYS = ["date_from", "date_to", "state", "category"];
+
+/** Only the filters that are set, so two equal filter sets compare equal. */
+export function cleanFilters(filters = {}) {
+  const out = {};
+  for (const key of FILTER_KEYS) if (filters[key]) out[key] = String(filters[key]);
+  return out;
+}
+
+export function filterQuery(filters = {}) {
+  const clean = cleanFilters(filters);
+  return Object.keys(clean).map((k) => `${k}=${encodeURIComponent(clean[k])}`).join("&");
+}
+
+export function sameFilters(a, b) {
+  return filterQuery(a) === filterQuery(b);
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2017-03" -> "Mar 2017"; anything else is returned unchanged. */
+export function formatMonth(value) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(value));
+  return match ? `${MONTHS[Number(match[2]) - 1]} ${match[1]}` : String(value);
+}
+
+/** Every month from first to last, inclusive, as YYYY-MM. */
+export function monthRange(first, last) {
+  const out = [];
+  let [y, m] = first.split("-").map(Number);
+  const [ly, lm] = last.split("-").map(Number);
+  while (y < ly || (y === ly && m <= lm)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
+}
+
+/** Period shortcuts for the data's own range: all time, each year, and the last 3 and 6 complete months. */
+export function periodPresets(first, last) {
+  const months = monthRange(first, last);
+  // The last month of the data is usually partial, so "last N months" ends one month earlier.
+  const end = months.length > 1 ? months[months.length - 2] : last;
+  const endIndex = months.indexOf(end);
+  const years = [...new Set(months.map((m) => m.slice(0, 4)))];
+  return [
+    { id: "all", label: "All time", date_from: "", date_to: "" },
+    ...years.map((y) => ({ id: y, label: y, date_from: months.find((m) => m.startsWith(y)), date_to: [...months].reverse().find((m) => m.startsWith(y)) })),
+    { id: "l6", label: "Last 6 months", date_from: months[Math.max(0, endIndex - 5)], date_to: end },
+    { id: "l3", label: "Last 3 months", date_from: months[Math.max(0, endIndex - 2)], date_to: end },
+  ];
+}
+
+/** "Mar 2017 to Aug 2018", "From Mar 2017", "All time". */
+export function describePeriod(filters = {}) {
+  const { date_from: from, date_to: to } = filters;
+  if (from && to) return from === to ? formatMonth(from) : `${formatMonth(from)} to ${formatMonth(to)}`;
+  if (from) return `From ${formatMonth(from)}`;
+  if (to) return `Up to ${formatMonth(to)}`;
+  return "All time";
+}
+
+/** A file-name-safe version of a title: "Revenue by month" -> "revenue-by-month". */
+export function slugify(text) {
+  return String(text || "export").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "export";
+}
+
+/**
+ * Axis text for the chosen ticks of a time axis. Months read "Jan 2017", then "Mar", "May"...
+ * with the year again only where it changes. Other labels are returned as they are.
+ */
+export function axisLabels(labels, indexes) {
+  let lastYear = "";
+  return indexes.map((i) => {
+    const label = String(labels[i]);
+    const match = /^(\d{4})-(\d{2})$/.exec(label);
+    if (!match) return label;
+    const month = formatMonth(label).slice(0, 3);
+    if (match[1] === lastYear) return month;
+    lastYear = match[1];
+    return `${month} ${match[1]}`;
+  });
+}

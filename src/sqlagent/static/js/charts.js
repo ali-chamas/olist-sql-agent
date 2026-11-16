@@ -2,7 +2,9 @@
 // Marks carry the series colour; every label and number stays in text colours.
 
 import { clear, el, svg } from "./dom.js";
-import { chartTitle, describeDelta, formatValue, humanize, niceTicks, pickIndexes, shorten } from "./lib.js";
+import { axisLabels, chartTitle, describeDelta, formatMonth, formatValue, humanize, niceTicks, pickIndexes, shorten } from "./lib.js";
+
+const seriesName = (chart, series) => (chart.by ? series.name : humanize(series.name));
 
 const ENTRANCE_MS = 900; // how long the first-draw animation class stays on
 
@@ -131,11 +133,13 @@ function drawLine(host, chart, width, animate) {
     root.append(svg("line", { class: tick === 0 ? "axis" : "grid", x1: left, x2: left + innerW, y1: y(tick), y2: y(tick) }));
     root.append(svg("text", { class: "tick", x: left - 8, y: y(tick) + 4, "text-anchor": "end", text: formatValue(tick, format) }));
   }
-  const labelWidth = Math.max(...chart.labels.map((l) => l.length)) * CHAR + 28;
-  for (const i of pickIndexes(count, Math.max(2, Math.floor(innerW / labelWidth)))) {
+  const longest = Math.max(...chart.labels.map((l) => formatMonth(l).length));
+  const shown = pickIndexes(count, Math.max(2, Math.floor(innerW / (longest * CHAR + 28))));
+  const texts = axisLabels(chart.labels, shown);
+  shown.forEach((i, n) => {
     const anchor = i === 0 ? "start" : i === count - 1 ? "end" : "middle";
-    root.append(svg("text", { class: "tick", x: x(i), y: LINE.height - 8, "text-anchor": anchor, text: chart.labels[i] }));
-  }
+    root.append(svg("text", { class: "tick", x: x(i), y: LINE.height - 8, "text-anchor": anchor, text: texts[n] }));
+  });
 
   chart.series.forEach((series, s) => {
     const points = series.values.map((v, i) => (v === null ? null : [x(i), y(v)])).filter(Boolean);
@@ -172,10 +176,10 @@ function drawLine(host, chart, width, animate) {
     const rows = chart.series.map((series, s) => ({
       series: chart.series.length > 1 ? s + 1 : 0,
       value: formatValue(series.values[active], series.format, true),
-      label: humanize(series.name),
+      label: seriesName(chart, series),
     }));
     const box = root.getBoundingClientRect();
-    showTooltip(event || { clientX: box.left + x(active), clientY: box.top + LINE.top + 24 }, rows, chart.labels[active]);
+    showTooltip(event || { clientX: box.left + x(active), clientY: box.top + LINE.top + 24 }, rows, formatMonth(chart.labels[active]));
   }
 
   function leave() {
@@ -205,7 +209,7 @@ function renderLine(chart) {
   const wrap = el("div", { class: "line-wrap" }, [
     chart.series.length > 1
       ? el("div", { class: "legend" }, chart.series.map((s, i) =>
-          el("span", { class: "legend-item" }, [el("span", { class: `legend-key series-${i + 1}` }), humanize(s.name)])))
+          el("span", { class: "legend-item" }, [el("span", { class: `legend-key series-${i + 1}` }), seriesName(chart, s)])))
       : null,
     host,
   ]);
@@ -286,11 +290,11 @@ export function renderFigure(payload, { title, note = "", tools = [], className 
   }
 
   const toolNodes = [toggle, ...tools].filter(Boolean);
-  const head = heading || note || toolNodes.length
+  const head = heading || note || payload.chart?.note || toolNodes.length
     ? el("header", { class: "figure-head" }, [
         el("div", { class: "figure-heading" }, [
           heading ? el(level, { class: "figure-title", text: heading }) : null,
-          note ? el("p", { class: "figure-note", text: note }) : null,
+          note || payload.chart?.note ? el("p", { class: "figure-note", text: note || payload.chart.note }) : null,
         ]),
         toolNodes.length ? el("div", { class: "figure-tools" }, toolNodes) : null,
       ])

@@ -1,11 +1,12 @@
 // App shell: navigation, recent questions, quota meter, theme, shortcuts, and the four views.
 
-import { addTile, createDashboard, getSchema, getStatus } from "./api.js";
+import { addTile, createDashboard, getSchema, getStatus, listDashboards } from "./api.js";
 import { createAskView } from "./ask.js";
 import { createOverviewView } from "./boards.js";
-import { clear, el } from "./dom.js";
+import { clear, el, icon } from "./dom.js";
 import { parseRoute, shorten } from "./lib.js";
 import { clearHistory, clearPins, getHistory, getPins, getTheme, setTheme } from "./store.js";
+import { createPalette } from "./palette.js";
 import { toast } from "./toast.js";
 import { createDashboardsView, createDashboardView } from "./workspace.js";
 
@@ -14,6 +15,8 @@ const nav = document.getElementById("nav");
 const recent = document.getElementById("recent");
 const recentSection = document.getElementById("recent-section");
 const footer = document.getElementById("rail-footer");
+const railBoards = document.getElementById("rail-boards");
+const railBoardList = document.getElementById("rail-board-list");
 
 // ------------------------------------------------------------------- schema
 
@@ -62,9 +65,9 @@ function createSchemaView() {
 // -------------------------------------------------------------------- shell
 
 const NAV = [
-  ["ask", "Ask"],
-  ["dashboards", "Dashboards"],
-  ["data", "Data"],
+  ["ask", "Ask", "question"],
+  ["dashboards", "Dashboards", "grid"],
+  ["data", "Data", "database"],
 ];
 const TITLES = { ask: "Ask Olist", dashboards: "Dashboards", overview: "Marketplace overview", data: "Data" };
 
@@ -84,7 +87,7 @@ let boardOptions = null; // highlight or focus requests for the next dashboard r
 const views = {
   ask: createAskView({ onAsked: () => { renderRecent(); refreshStatus(); }, onOpen: go }),
   dashboards: createDashboardsView({ onOpen: (id, options) => { boardOptions = options; go(`d/${encodeURIComponent(id)}`); } }),
-  board: createDashboardView({ onAskAbout: explore, onMissing: () => go("dashboards") }),
+  board: createDashboardView({ onAskAbout: explore, onMissing: () => go("dashboards"), onOpen: (id) => go(`d/${id}`) }),
   overview: createOverviewView({ onExplore: explore }),
   data: createSchemaView(),
 };
@@ -104,6 +107,7 @@ function render() {
     if (link.dataset.route === route.section) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
+  markRailBoard(route);
   const view = views[route.view];
   if (main.firstElementChild !== view.node) {
     main.replaceChildren(view.node);
@@ -136,6 +140,37 @@ async function migratePins() {
     toast("Your pinned answers are now a dashboard", { label: "Open", run: () => go(`d/${board.id}`) });
   } catch {
     // Server unreachable: try again on the next visit.
+  }
+}
+
+// The saved dashboards, listed in the sidebar like a folder.
+let railItems = [];
+async function renderRailBoards() {
+  try {
+    railItems = await listDashboards();
+  } catch {
+    return;
+  }
+  railBoards.hidden = false;
+  const items = [{ id: "overview", title: "Marketplace overview", builtin: true }, ...railItems.slice(0, 9)];
+  railBoardList.replaceChildren(...items.map((item) => {
+    const href = item.builtin ? "#/overview" : `#/d/${encodeURIComponent(item.id)}`;
+    return el("li", {}, el("a", { class: "rail-link", href, "data-board": item.id, title: item.title }, [
+      el("span", { class: "rail-dot", "aria-hidden": "true" }),
+      el("span", { class: "rail-link-text", text: item.title }),
+    ]));
+  }));
+  if (railItems.length > 9) {
+    railBoardList.append(el("li", {}, el("a", { class: "rail-link rail-more", href: "#/dashboards", text: `All ${railItems.length} dashboards` })));
+  }
+  markRailBoard(currentRoute());
+}
+
+function markRailBoard(route) {
+  const current = route.view === "board" ? route.id : route.view === "overview" ? "overview" : "";
+  for (const link of railBoardList.querySelectorAll("[data-board]")) {
+    if (link.dataset.board === current) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
   }
 }
 
@@ -174,27 +209,46 @@ function applyTheme(theme) {
   else delete document.documentElement.dataset.theme;
 }
 
+const isDark = () => (document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark";
+let themeButton = null;
+
+function toggleTheme() {
+  const next = isDark() ? "light" : "dark";
+  setTheme(next);
+  applyTheme(next);
+  labelTheme();
+}
+
+function labelTheme() {
+  themeButton?.replaceChildren(icon(isDark() ? "sun" : "moon"), el("span", { class: "tool-label", text: isDark() ? "Light theme" : "Dark theme" }));
+}
+
 function setupTheme() {
   applyTheme(getTheme());
-  const button = el("button", { type: "button", class: "tool theme-toggle" });
-  const isDark = () => (document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark";
-  const label = () => { button.textContent = isDark() ? "Use light theme" : "Use dark theme"; };
-  button.addEventListener("click", () => {
-    const next = isDark() ? "light" : "dark";
-    setTheme(next);
-    applyTheme(next);
-    label();
-  });
-  label();
-  footer.append(button);
+  themeButton = el("button", { type: "button", class: "tool theme-toggle", onclick: toggleTheme });
+  labelTheme();
+  footer.append(themeButton);
 }
 
 function typingInField(target) {
   return target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 }
 
-nav.append(...NAV.map(([route, label]) =>
-  el("a", { href: `#/${route}`, class: "nav-link", "data-route": route }, el("span", { text: label }))));
+nav.append(...NAV.map(([route, label, iconName]) =>
+  el("a", { href: `#/${route}`, class: "nav-link", "data-route": route }, [icon(iconName), el("span", { text: label })])));
+
+const palette = createPalette({
+  go,
+  ask: (question) => { go("ask"); views.ask.askFresh(question); },
+  build: (prompt) => { go("dashboards"); views.dashboards.startBuild(prompt); },
+  toggleTheme,
+});
+const searchButton = document.getElementById("search");
+searchButton.addEventListener("click", () => palette.open());
+if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) {
+  searchButton.querySelector(".search-kbd").textContent = "\u2318 K";
+}
+window.addEventListener("boards:changed", renderRailBoards);
 
 document.getElementById("clear-recent").addEventListener("click", () => { clearHistory(); renderRecent(); });
 window.addEventListener("hashchange", render);
@@ -209,6 +263,7 @@ document.addEventListener("keydown", (event) => {
 
 setupTheme();
 renderRecent();
+renderRailBoards();
 refreshStatus();
 render();
 migratePins();

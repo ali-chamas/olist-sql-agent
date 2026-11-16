@@ -20,15 +20,19 @@ from typing import Any
 from .agent import EMPTY_TURN, Step, format_result
 from .catalog import TABLES
 from .db import QueryError, ReadOnlyDatabase
+from .filters import FilterError, FilterOptions, Filters, describe, load_options, validate
 from .llm import INVALID_CALL_TEXT, LLMClient, LLMError, Message, ToolCall, ToolSpec, Usage, report_waits
 from .prompts import schema_text
 from .workspace import (
+    TEXT,
     Change,
     Dashboard,
     EditError,
+    add_text_tile,
     add_tile,
     move_tile,
     remove_tile,
+    set_filters,
     summarize,
     update_details,
     update_tile,
@@ -48,6 +52,10 @@ How to work:
 - add_tile and update_tile run the SQL and check the chart type before accepting.
   If a call is refused, read the error, fix the query or the chart type, and try again.
 - Use run_sql only when you need to look at the data before deciding.
+- To limit the WHOLE dashboard to a period, a customer state or a product category,
+  call set_filters instead of editing every query. Filters apply to every tile.
+- Use add_text for a short section heading or context (for example "Delivery" with one
+  sentence of explanation). Do not use it to restate numbers.
 - Finish with finish, giving one sentence that says what you changed.
 - If the request cannot be done with this data, call cannot_do with the reason.
 
@@ -58,7 +66,8 @@ Tiles:
   1 to 3 numeric columns in the same unit. bar = one label column and one number,
   2 to 25 rows, ranked and with a LIMIT. table = anything else (at most 50 rows).
   auto lets the server choose.
-- size: full for line charts, kpi rows and wide tables; half otherwise.
+- size: full for line charts, kpi rows and wide tables; half otherwise. Two half tiles
+  share a row, so place half tiles in pairs.
 - Aggregate in SQL. Never return raw rows without a LIMIT.
 - For monthly trends use strftime('%Y-%m', order_date) AS month, and only complete
   months: order_date >= '2017-01-01' AND order_date < '2018-09-01', unless asked otherwise.
@@ -139,6 +148,33 @@ TOOLS: list[ToolSpec] = [
         },
     ),
     ToolSpec(
+        "add_text",
+        "Add a text tile: a short heading and up to a few sentences. No query.",
+        {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "text": {"type": "string"},
+                "size": _SIZE,
+                "position": {"type": "integer"},
+            },
+            "required": ["title"],
+        },
+    ),
+    ToolSpec(
+        "set_filters",
+        "Set the dashboard filters, which apply to every tile. Empty or omitted fields clear that filter.",
+        {
+            "type": "object",
+            "properties": {
+                "date_from": {"type": "string", "description": "First month, YYYY-MM, inclusive."},
+                "date_to": {"type": "string", "description": "Last month, YYYY-MM, inclusive."},
+                "state": {"type": "string", "description": "Customer state code, for example SP."},
+                "category": {"type": "string", "description": "Product category, for example Health Beauty."},
+            },
+        },
+    ),
+    ToolSpec(
         "update_dashboard",
         "Change the dashboard's title or description.",
         {"type": "object", "properties": {"title": {"type": "string"}, "description": {"type": "string"}}},
@@ -173,7 +209,15 @@ def describe_dashboard(dashboard: Dashboard) -> str:
         }
         for t in dashboard.tiles
     ]
-    return json.dumps({"title": dashboard.title, "description": dashboard.description, "tiles": tiles}, indent=1)
+    return json.dumps(
+        {
+            "title": dashboard.title,
+            "description": dashboard.description,
+            "filters": describe(Filters.from_dict(dashboard.filters)),
+            "tiles": tiles,
+        },
+        indent=1,
+    )
 
 
 def build_request(dashboard: Dashboard, request: str, focus_tile: str | None) -> str:
@@ -219,6 +263,8 @@ class BuildResult:
 
 
 def describe_change(change: Change) -> str:
+    if change.kind == "filtered":
+        return f"Set the filters to {change.title}"
     verbs = {"added": "Added", "updated": "Updated", "removed": "Removed", "moved": "Moved", "renamed": "Renamed to"}
     return f"{verbs[change.kind]} “{change.title}”"
 
@@ -229,7 +275,14 @@ class DashboardAgent:
         self.db = db
         self.max_steps = max_steps
         self.system = system_prompt()
+        self._options: FilterOptions | None = None
         assert TABLES  # the schema is part of the prompt
+
+    @property
+    def options(self) -> FilterOptions:
+        if self._options is None:
+            self._options = load_options(self.db)
+        return self._options
 
     def run(
         self,
@@ -359,7 +412,7 @@ class DashboardAgent:
         result.changes.append(change)
         tile = next((t for t in draft.tiles if t.id == change.tile_id), None)
         detail = describe_change(change)
-        sql = tile.sql if tile and call.name in ("add_tile", "update_tile") else ""
+        sql = tile.sql if tile and call.name in ("add_tile", "update_tile") and tile.chart != TEXT else ""
         result.steps.append(Step(tool=call.name, sql=sql, detail=detail))
         if tile and change.kind in ("added", "updated"):
             detail += f" as tile {tile.id} ({tile.chart} chart, {tile.size} width)"
@@ -382,6 +435,16 @@ class DashboardAgent:
             return update_tile(draft, self.db, args.get("tile_id"), **fields)
         if name == "remove_tile":
             return remove_tile(draft, args.get("tile_id"))
+        if name == "add_text":
+            return add_text_tile(
+                draft, args.get("title"), args.get("text") or "", args.get("size"), args.get("position")
+            )
+        if name == "set_filters":
+            try:
+                chosen = validate(Filters.from_dict(args), self.options)
+            except FilterError as exc:
+                raise EditError(f"{exc} Allowed states: {', '.join(self.options.states)}.") from exc
+            return set_filters(draft, chosen.to_dict(), describe(chosen))
         if name == "move_tile":
             return move_tile(draft, args.get("tile_id"), args.get("position"))
         return update_details(draft, args.get("title"), args.get("description"))

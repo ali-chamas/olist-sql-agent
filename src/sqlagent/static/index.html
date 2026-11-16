@@ -4,18 +4,32 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ask Olist</title>
-<meta name="description" content="Ask questions about 100,000 e-commerce orders. An agent writes read-only SQL and shows its work.">
-<link rel="icon" href="data:,">
+<meta name="description" content="Ask questions and build dashboards in plain language on a private, read-only database. An agent writes the SQL and shows its work.">
+<meta name="theme-color" content="#1b2a41">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <div class="shell">
   <aside class="rail">
-    <a class="brand" href="#/ask">Ask Olist</a>
+    <a class="brand" href="#/ask" aria-label="Ask Olist, home">
+      <svg class="brand-mark" viewBox="0 0 32 32" width="30" height="30" aria-hidden="true" focusable="false"><rect width="32" height="32" rx="8" fill="#1b2a41"/><rect x="6" y="18.5" width="20" height="6" rx="1.5" fill="#ffd84a"/><rect x="8" y="15" width="3.5" height="8" rx="1" fill="#fff"/><rect x="14.25" y="10" width="3.5" height="13" rx="1" fill="#fff"/><rect x="20.5" y="6.5" width="3.5" height="16.5" rx="1" fill="#fff"/></svg>
+      <span class="brand-text"><span class="brand-name">Ask Olist</span><span class="brand-sub">Marketplace analytics</span></span>
+    </a>
+    <button id="search" type="button" class="search-trigger" aria-keyshortcuts="Control+K Meta+K">
+      <span class="search-label">Search or jump to</span><kbd class="search-kbd">Ctrl K</kbd>
+    </button>
     <nav id="nav" class="nav" aria-label="Sections"></nav>
-    <section id="recent-section" class="recent" hidden>
-      <div class="recent-head">
+    <section id="rail-boards" class="rail-section" hidden>
+      <div class="rail-head">
+        <h2 class="rail-title">Dashboards</h2>
+        <a class="rail-add" href="#/dashboards" aria-label="New dashboard">New</a>
+      </div>
+      <ul id="rail-board-list" class="rail-list"></ul>
+    </section>
+    <section id="recent-section" class="rail-section recent" hidden>
+      <div class="rail-head">
         <h2 class="rail-title">Recent questions</h2>
         <button id="clear-recent" type="button" class="button button-quiet">Clear</button>
       </div>

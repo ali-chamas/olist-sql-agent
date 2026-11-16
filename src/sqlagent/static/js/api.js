@@ -1,4 +1,4 @@
-import { createSSEParser } from "./lib.js";
+import { createSSEParser, filterQuery } from "./lib.js";
 
 const OFFLINE = "Cannot reach the Ask Olist server. Check that it is running, then try again.";
 
@@ -103,7 +103,14 @@ export const addTile = (id, fields) => send("POST", `${board(id)}/tiles`, fields
 export const updateTile = (id, tileId, fields) => send("PATCH", tile(id, tileId), fields);
 export const removeTile = (id, tileId, version) => send("DELETE", `${tile(id, tileId)}?version=${e(version)}`);
 export const moveTile = (id, tileId, position, version) => send("POST", `${tile(id, tileId)}/move`, { position, version });
-export const getTileData = (id, tileId) => getJSON(`${tile(id, tileId)}/data`);
+export const getTileData = (id, tileId, filters = {}) => {
+  const query = filterQuery(filters);
+  return getJSON(`${tile(id, tileId)}/data${query ? `?${query}` : ""}`);
+};
+export const duplicateDashboard = (id) => send("POST", `${board(id)}/duplicate`, {});
+export const addTextTile = (id, fields) => send("POST", `${board(id)}/tiles`, { kind: "text", ...fields });
+let filterOptions = null;
+export const getFilterOptions = () => (filterOptions ??= getJSON("/api/filters").catch((err) => { filterOptions = null; throw err; }));
 
 /** Ask the AI to change a dashboard. Resolves with {status, message, summary, changes, dashboard, saved}. */
 export const editWithAI = (id, prompt, { tileId, version } = {}, onEvent, signal) =>

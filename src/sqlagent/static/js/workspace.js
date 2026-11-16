@@ -3,8 +3,9 @@
 
 import * as api from "./api.js";
 import { renderFigure } from "./charts.js";
-import { clear, el, icon, toolButton } from "./dom.js";
-import { describeStep, formatElapsed, shorten, timeAgo, waitingText } from "./lib.js";
+import { clear, download, el, icon, toolButton } from "./dom.js";
+import { createFilterBar } from "./filterbar.js";
+import { cleanFilters, describePeriod, describeStep, filterQuery, formatElapsed, sameFilters, shorten, slugify, timeAgo, toCSV, waitingText } from "./lib.js";
 import { openMenu } from "./menu.js";
 import { toast } from "./toast.js";
 
@@ -136,6 +137,7 @@ export function createDashboardsView({ onOpen }) {
       const result = await api.buildWithAI(text, (e) => progress.event(e), controller.signal);
       if (result.saved && result.dashboard) {
         prompt.value = "";
+        boardsChanged();
         toast(`Built “${result.dashboard.title}”`);
         onOpen(result.dashboard.id, { highlight: result.dashboard.tiles.map((t) => t.id) });
       } else {
@@ -162,6 +164,7 @@ export function createDashboardsView({ onOpen }) {
   blank.addEventListener("click", async () => {
     try {
       const created = await api.createDashboard("Untitled dashboard");
+      boardsChanged();
       onOpen(created.id, { focusTitle: true });
     } catch (err) {
       toast(err.message);
@@ -183,14 +186,16 @@ export function createDashboardsView({ onOpen }) {
       try {
         await api.deleteDashboard(item.id);
         toast(`Deleted “${item.title}”`);
+        boardsChanged();
         show();
       } catch (err) {
         toast(err.message);
       }
     });
-    const charts = item.tile_count === 1 ? "1 chart" : `${item.tile_count} charts`;
+    const charts = item.tile_count === 1 ? "1 tile" : `${item.tile_count} tiles`;
     return el("article", { class: "board-card" }, [
       el("a", { class: "board-card-link", href: `#/d/${encodeURIComponent(item.id)}` }, [
+        thumbnail(item.layout || []),
         el("h3", { class: "board-card-title", text: item.title }),
         item.description ? el("p", { class: "board-card-text", text: item.description }) : null,
       ]),
@@ -200,6 +205,7 @@ export function createDashboardsView({ onOpen }) {
 
   const builtIn = el("article", { class: "board-card board-card-builtin" }, [
     el("a", { class: "board-card-link", href: "#/overview" }, [
+      thumbnail([{ chart: "kpi", size: "full" }, { chart: "line", size: "full" }, { chart: "bar", size: "half" }, { chart: "bar", size: "half" }]),
       el("h3", { class: "board-card-title", text: "Marketplace overview" }),
       el("p", { class: "board-card-text", text: "Headline numbers, revenue trend, categories, states and delivery, with year-over-year comparisons." }),
     ]),
@@ -215,7 +221,27 @@ export function createDashboardsView({ onOpen }) {
     }
   }
 
-  return { node, show };
+  /** Start building from text typed elsewhere, such as the command palette. */
+  function startBuild(text) {
+    prompt.value = text;
+    if (!controller) form.requestSubmit();
+  }
+
+  return { node, show, startBuild };
+}
+
+/** Tell the rest of the app (the sidebar list) that dashboards were added, renamed or removed. */
+export function boardsChanged() {
+  window.dispatchEvent(new Event("boards:changed"));
+}
+
+/** A small drawing of a dashboard's layout: one block per tile, shaped like its chart. */
+function thumbnail(shapes) {
+  const widths = layout(shapes);
+  const cells = shapes.slice(0, 8).map((shape, i) =>
+    el("span", { class: `thumb-cell thumb-${shape.chart === "auto" ? "bar" : shape.chart} ${widths[i] === "full" ? "thumb-full" : ""}`.trim() }));
+  if (!cells.length) cells.push(el("span", { class: "thumb-cell thumb-blank thumb-full" }));
+  return el("div", { class: "thumb", "aria-hidden": "true" }, cells);
 }
 
 /**
@@ -245,7 +271,7 @@ export function layout(tiles) {
 
 // ================================================================= editor
 
-export function createDashboardView({ onAskAbout, onMissing }) {
+export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
   const title = el("input", { class: "board-title", "aria-label": "Dashboard title", maxLength: 120 });
   const description = el("textarea", { class: "board-description", rows: 1, "aria-label": "Dashboard description", maxLength: 400, placeholder: "Add a description" });
   const fitDescription = () => {
@@ -255,7 +281,17 @@ export function createDashboardView({ onAskAbout, onMissing }) {
   description.addEventListener("input", fitDescription);
   const meta = el("p", { class: "board-meta" });
   const historyButton = toolButton("retry", "History", () => toggleHistory());
-  const more = el("button", { type: "button", class: "tool", "aria-haspopup": "menu", "aria-expanded": "false" }, [el("span", { class: "tool-label", text: "More" })]);
+  const addButton = toolButton("plus", "Add", () => openAddMenu(), { "aria-haspopup": "menu", "aria-expanded": "false" });
+  const presentButton = toolButton("play", "Present", () => setPresenting(true));
+  const more = el("button", { type: "button", class: "tool", "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": "More dashboard actions" }, [icon("more"), el("span", { class: "tool-label", text: "More" })]);
+  const exitPresent = el("button", { type: "button", class: "button button-secondary present-exit", text: "Exit presentation", onclick: () => setPresenting(false) });
+  const filterBar = createFilterBar({
+    onChange: (filters) => {
+      active = filters;
+      renderTiles();
+    },
+    onSave: (filters) => apply(api.updateDashboard(board.id, { filters, version: board.version }), `Saved the filters as this dashboard's default`),
+  });
   const history = el("section", { class: "history", hidden: true, "aria-label": "Version history" });
   const grid = el("div", { class: "tiles board-tiles" });
   const empty = el("div", { class: "empty board-empty", hidden: true });
@@ -280,9 +316,13 @@ export function createDashboardView({ onAskAbout, onMissing }) {
 
   const node = el("div", { class: "view view-wide view-board" }, [
     el("header", { class: "board-head" }, [
-      el("div", { class: "board-heading" }, [title, description, meta]),
-      el("div", { class: "board-tools" }, [historyButton, more]),
+      el("div", { class: "board-heading" }, [
+        el("p", { class: "board-crumbs" }, el("a", { href: "#/dashboards", text: "Dashboards" })),
+        title, description, meta,
+      ]),
+      el("div", { class: "board-tools" }, [addButton, historyButton, presentButton, more, exitPresent]),
     ]),
+    filterBar.node,
     history,
     empty,
     grid,
@@ -293,6 +333,10 @@ export function createDashboardView({ onAskAbout, onMissing }) {
   let dataCache = new Map(); // tile id -> { key, payload } so unchanged tiles are not refetched
   let scopeTile = null;
   let controller = null;
+  let active = {}; // filters on screen; the dashboard's saved filters are board.filters
+  let changedTiles = [];
+  let badge = "Changed by AI";
+  api.getFilterOptions().then(filterBar.setOptions).catch(() => { filterBar.node.hidden = true; });
 
   // ------------------------------------------------------------- loading
 
@@ -307,6 +351,7 @@ export function createDashboardView({ onAskAbout, onMissing }) {
       title.value = "";
       description.value = "";
       meta.textContent = "Loading";
+      active = {};
     }
     try {
       render(await api.getDashboard(id), options.highlight || []);
@@ -320,8 +365,12 @@ export function createDashboardView({ onAskAbout, onMissing }) {
     }
   }
 
-  function render(next, changed = []) {
+  function render(next, changed = [], label = "Changed by AI") {
+    badge = label;
+    // Follow the saved filters unless the person has changed them on screen.
+    if (!board || board.id !== next.id || sameFilters(active, board.filters)) active = cleanFilters(next.filters);
     board = next;
+    filterBar.set(active, board.filters);
     if (document.activeElement !== title) title.value = board.title;
     if (document.activeElement !== description) description.value = board.description;
     requestAnimationFrame(fitDescription);
@@ -334,10 +383,17 @@ export function createDashboardView({ onAskAbout, onMissing }) {
       : "Describe what this dashboard should show";
     const keep = new Set(board.tiles.map((t) => t.id));
     for (const id of dataCache.keys()) if (!keep.has(id)) dataCache.delete(id);
-    const widths = layout(board.tiles);
-    clear(grid).append(...board.tiles.map((t, i) => tileNode(t, i, changed.includes(t.id), widths[i])));
+    changedTiles = changed;
+    renderTiles();
     if (!history.hidden) loadHistory();
     if (scopeTile && !keep.has(scopeTile.id)) setScope(null);
+  }
+
+  function renderTiles() {
+    if (!board) return;
+    const widths = layout(board.tiles);
+    clear(grid).append(...board.tiles.map((t, i) => tileNode(t, i, changedTiles.includes(t.id), widths[i])));
+    changedTiles = [];
   }
 
   function renderEmpty() {
@@ -353,7 +409,12 @@ export function createDashboardView({ onAskAbout, onMissing }) {
 
   function tileNode(tile, index, changed, width) {
     const slot = el("div", { class: width === "full" ? "tile-slot tile-wide" : "tile-slot", "data-tile": tile.id });
-    const key = `${tile.sql}\u0000${tile.chart}`;
+    enableDrag(slot, tile, index);
+    if (tile.chart === "text") {
+      slot.append(textTile(tile, index, changed));
+      return slot;
+    }
+    const key = `${tile.sql}\u0000${tile.chart}\u0000${filterQuery(active)}`;
     const cached = dataCache.get(tile.id);
     const draw = (payload) => {
       const moreButton = el("button", {
@@ -362,18 +423,24 @@ export function createDashboardView({ onAskAbout, onMissing }) {
       }, [el("span", { class: "tool-label", text: "More" })]);
       moreButton.addEventListener("click", () => openTileMenu(moreButton, tile, index, payload));
       const ai = toolButton("chat", "Edit with AI", () => setScope(tile), { "aria-label": `Edit ${tile.title} with AI` });
-      const figure = payload.error
-        ? el("section", { class: "figure tile" }, [
-            el("header", { class: "figure-head" }, [
-              el("div", { class: "figure-heading" }, el("h3", { class: "figure-title", text: tile.title })),
-              el("div", { class: "figure-tools" }, [ai, moreButton]),
-            ]),
-            el("p", { class: "edit-error", text: `This query failed: ${payload.error}` }),
-          ])
-        : renderFigure(payload, { title: tile.title, note: payload.warning || tile.note, tools: [ai, moreButton], className: "tile" });
+      const plain = (body) => el("section", { class: "figure tile" }, [
+        el("header", { class: "figure-head" }, [
+          el("div", { class: "figure-heading" }, el("h3", { class: "figure-title", text: tile.title })),
+          el("div", { class: "figure-tools" }, [ai, moreButton]),
+        ]),
+        body,
+      ]);
+      let figure;
+      if (payload.error) figure = plain(el("p", { class: "edit-error", text: `This query failed: ${payload.error}` }));
+      else if (payload.chart?.type === "empty") {
+        figure = plain(el("div", { class: "tile-empty" }, [
+          el("p", { class: "tile-empty-title", text: "No data for these filters" }),
+          el("p", { class: "tile-empty-text", text: `${describePeriod(active)}${active.state ? `, ${active.state}` : ""}${active.category ? `, ${active.category}` : ""}` }),
+        ]));
+      } else figure = renderFigure(payload, { title: tile.title, note: payload.warning || tile.note, tools: [ai, moreButton], className: "tile" });
       if (changed) {
         figure.classList.add("tile-changed");
-        figure.prepend(el("span", { class: "tile-badge", text: "Changed by AI" }));
+        figure.prepend(el("span", { class: "tile-badge", text: badge }));
         setTimeout(() => figure.classList.remove("tile-changed"), HIGHLIGHT_MS);
       }
       slot.replaceChildren(figure);
@@ -385,7 +452,7 @@ export function createDashboardView({ onAskAbout, onMissing }) {
         el("header", { class: "figure-head" }, el("h3", { class: "figure-title", text: tile.title })),
         el("p", { class: "table-note", text: "Running the query" }),
       ]));
-      api.getTileData(board.id, tile.id)
+      api.getTileData(board.id, tile.id, active)
         .then((payload) => {
           dataCache.set(tile.id, { key, payload });
           if (slot.isConnected) draw(payload);
@@ -395,10 +462,149 @@ export function createDashboardView({ onAskAbout, onMissing }) {
     return slot;
   }
 
+  function textTile(tile, index, changed) {
+    const moreButton = el("button", {
+      type: "button", class: "tool tile-more", "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": `Actions for ${tile.title || "text"}`,
+    }, [el("span", { class: "tool-label", text: "More" })]);
+    const last = board.tiles.length - 1;
+    moreButton.addEventListener("click", () => openMenu(moreButton, [
+      { label: "Edit text", onSelect: () => openTextEditor(tile) },
+      { label: tile.size === "full" ? "Make half width" : "Make full width",
+        onSelect: () => apply(api.updateTile(board.id, tile.id, { size: tile.size === "full" ? "half" : "full", version: board.version }), "Resized the text") },
+      { label: "Move earlier", disabled: index === 0, onSelect: () => apply(api.moveTile(board.id, tile.id, index - 1, board.version), "Moved the text") },
+      { label: "Move later", disabled: index === last, onSelect: () => apply(api.moveTile(board.id, tile.id, index + 1, board.version), "Moved the text") },
+      "separator",
+      { label: "Remove", danger: true, onSelect: () => apply(api.removeTile(board.id, tile.id, board.version), `Removed “${tile.title || "text"}”`) },
+    ], { label: `Actions for ${tile.title || "text"}` }));
+    const figure = el("section", { class: "figure tile tile-text" }, [
+      el("header", { class: "figure-head" }, [
+        el("div", { class: "figure-heading" }, tile.title ? el("h3", { class: "text-tile-title", text: tile.title }) : null),
+        el("div", { class: "figure-tools" }, [moreButton]),
+      ]),
+      tile.note ? el("div", { class: "text-tile-body" }, tile.note.split(/\n{2,}/).map((p) => el("p", { text: p }))) : null,
+    ]);
+    figure.addEventListener("dblclick", () => openTextEditor(tile));
+    if (changed) {
+      figure.classList.add("tile-changed");
+      setTimeout(() => figure.classList.remove("tile-changed"), HIGHLIGHT_MS);
+    }
+    return figure;
+  }
+
+  // Drag a tile by its header to reorder; the menu's Move earlier/later does the same from the keyboard.
+  let dragging = null;
+  function enableDrag(slot, tile, index) {
+    slot.addEventListener("pointerdown", (event) => {
+      slot.draggable = Boolean(event.target.closest(".figure-head")) && !event.target.closest("button, input, select, a");
+    });
+    slot.addEventListener("dragstart", (event) => {
+      if (!slot.draggable) return;
+      dragging = { id: tile.id, index };
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", tile.title || tile.id);
+      requestAnimationFrame(() => slot.classList.add("tile-dragging"));
+    });
+    slot.addEventListener("dragend", () => {
+      slot.draggable = false;
+      slot.classList.remove("tile-dragging");
+      grid.querySelectorAll(".drop-before, .drop-after").forEach((n) => n.classList.remove("drop-before", "drop-after"));
+      dragging = null;
+    });
+    slot.addEventListener("dragover", (event) => {
+      if (!dragging || dragging.id === tile.id) return;
+      event.preventDefault();
+      const box = slot.getBoundingClientRect();
+      const after = slot.classList.contains("tile-wide") ? event.clientY > box.top + box.height / 2 : event.clientX > box.left + box.width / 2;
+      slot.classList.toggle("drop-after", after);
+      slot.classList.toggle("drop-before", !after);
+    });
+    slot.addEventListener("dragleave", () => slot.classList.remove("drop-before", "drop-after"));
+    slot.addEventListener("drop", (event) => {
+      if (!dragging || dragging.id === tile.id) return;
+      event.preventDefault();
+      const after = slot.classList.contains("drop-after");
+      let target = index + (after ? 1 : 0);
+      if (dragging.index < target) target -= 1;
+      const moved = board.tiles[dragging.index];
+      slot.classList.remove("drop-before", "drop-after");
+      if (target !== dragging.index) apply(api.moveTile(board.id, dragging.id, target, board.version), `Moved “${moved.title || "text"}”`);
+    });
+  }
+
+  function openAddMenu() {
+    openMenu(addButton, [
+      { label: "Chart, described in words", onSelect: () => { setScope(null); input.focus(); input.placeholder = "Describe the chart, such as “revenue by state as a bar chart”"; } },
+      { label: "Chart from SQL", onSelect: () => openEditor(null) },
+      { label: "Text or heading", onSelect: async () => {
+        const ok = await apply(api.addTextTile(board.id, { title: "New section", text: "", version: board.version }), null);
+        if (ok) openTextEditor(board.tiles[board.tiles.length - 1]);
+      } },
+    ], { label: "Add to this dashboard" });
+  }
+
+  function openTextEditor(tile) {
+    const slot = grid.querySelector(`[data-tile="${CSS.escape(tile.id)}"]`);
+    if (!slot) return;
+    const fieldTitle = el("input", { class: "field-input", value: tile.title, maxLength: 120, placeholder: "Heading" });
+    const fieldText = el("textarea", { class: "field-input field-text", rows: 4, maxLength: 2000, value: tile.note, placeholder: "A few sentences of context. Leave a blank line between paragraphs." });
+    const message = el("p", { class: "edit-error", role: "alert", hidden: true });
+    const save = el("button", { type: "submit", class: "button button-primary", text: "Save" });
+    const cancel = el("button", { type: "button", class: "button button-secondary", text: "Cancel", onclick: () => render(board) });
+    const field = (label, control) => el("label", { class: "field" }, [el("span", { class: "field-label", text: label }), control]);
+    const editor = el("form", { class: "figure tile tile-editor" }, [
+      el("h3", { class: "figure-title", text: "Edit text" }),
+      field("Heading", fieldTitle),
+      field("Text", fieldText),
+      message,
+      el("div", { class: "edit-actions" }, [save, cancel]),
+    ]);
+    editor.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const changes = { version: board.version };
+      if (fieldTitle.value.trim() !== tile.title) changes.title = fieldTitle.value;
+      if (fieldText.value.trim() !== tile.note) changes.note = fieldText.value;
+      if (Object.keys(changes).length === 1) return render(board);
+      save.disabled = true;
+      try {
+        render(await api.updateTile(board.id, tile.id, changes));
+        toast("Saved the text");
+      } catch (err) {
+        message.textContent = err.message;
+        message.hidden = false;
+        save.disabled = false;
+      }
+    });
+    editor.addEventListener("keydown", (event) => { if (event.key === "Escape") render(board); });
+    slot.classList.add("tile-wide");
+    slot.replaceChildren(editor);
+    fieldTitle.focus();
+    fieldTitle.select();
+  }
+
+  // ------------------------------------------------------- presentation
+
+  function setPresenting(on) {
+    document.body.classList.toggle("presenting", on);
+    if (on) {
+      setScope(null);
+      document.documentElement.requestFullscreen?.().catch(() => {});
+      toast("Presenting. Press Esc to exit.");
+    } else if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  }
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.body.classList.contains("presenting")) setPresenting(false);
+  });
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement && document.body.classList.contains("presenting")) setPresenting(false);
+  });
+
   async function apply(promise, message) {
     try {
       const next = await promise;
       render(next);
+      boardsChanged();
       if (message) toast(message, { label: "Undo", run: () => undo(next.version - 1) });
       return true;
     } catch (err) {
@@ -427,13 +633,22 @@ export function createDashboardView({ onAskAbout, onMissing }) {
       { label: "Move earlier", disabled: index === 0, onSelect: () => apply(api.moveTile(board.id, tile.id, index - 1, board.version), "Moved the chart") },
       { label: "Move later", disabled: index === last, onSelect: () => apply(api.moveTile(board.id, tile.id, index + 1, board.version), "Moved the chart") },
       { label: "Ask a question about it", disabled: Boolean(payload.error), onSelect: () => onAskAbout({ title: tile.title, sql: tile.sql, payload }) },
+      { label: "Download CSV", disabled: Boolean(payload.error) || !payload.rows?.length,
+        onSelect: () => download(`${slugify(tile.title)}.csv`, toCSV(payload.columns, payload.rows)) },
       "separator",
       { label: "Remove", danger: true, onSelect: () => apply(api.removeTile(board.id, tile.id, board.version), `Removed “${tile.title}”`) },
     ], { label: `Actions for ${tile.title}` });
   }
 
-  function openEditor(tile) {
-    const slot = grid.querySelector(`[data-tile="${CSS.escape(tile.id)}"]`);
+  function openEditor(existing) {
+    const tile = existing || { id: "", title: "", sql: "SELECT\n  \nFROM sales\nLIMIT 10", chart: "auto", size: "half", note: "" };
+    let slot = existing ? grid.querySelector(`[data-tile="${CSS.escape(tile.id)}"]`) : null;
+    if (!existing) {
+      grid.querySelector(".tile-new")?.remove();
+      slot = el("div", { class: "tile-slot tile-wide tile-new" });
+      grid.append(slot);
+      empty.hidden = true;
+    }
     if (!slot) return;
     const fieldTitle = el("input", { class: "field-input", value: tile.title, maxLength: 120 });
     const fieldChart = el("select", { class: "field-input" }, Object.entries(CHART_LABELS).map(([value, label]) =>
@@ -447,7 +662,7 @@ export function createDashboardView({ onAskAbout, onMissing }) {
     const cancel = el("button", { type: "button", class: "button button-secondary", text: "Cancel", onclick: () => render(board) });
     const field = (label, control) => el("label", { class: "field" }, [el("span", { class: "field-label", text: label }), control]);
     const editor = el("form", { class: "figure tile tile-editor" }, [
-      el("h3", { class: "figure-title", text: "Edit chart" }),
+      el("h3", { class: "figure-title", text: existing ? "Edit chart" : "New chart from SQL" }),
       field("Title", fieldTitle),
       el("div", { class: "field-row" }, [field("Show as", fieldChart), field("Width", fieldSize)]),
       field("Note", fieldNote),
@@ -458,6 +673,20 @@ export function createDashboardView({ onAskAbout, onMissing }) {
     editor.addEventListener("submit", async (event) => {
       event.preventDefault();
       save.disabled = true;
+      if (!existing) {
+        try {
+          const next = await api.addTile(board.id, {
+            title: fieldTitle.value, sql: fieldSql.value, chart: fieldChart.value, size: fieldSize.value, note: fieldNote.value, version: board.version,
+          });
+          render(next, [next.tiles[next.tiles.length - 1].id], "New");
+          toast("Added the chart");
+        } catch (err) {
+          message.textContent = err.message;
+          message.hidden = false;
+          save.disabled = false;
+        }
+        return;
+      }
       const changes = { version: board.version };
       if (fieldTitle.value.trim() !== tile.title) changes.title = fieldTitle.value;
       if (fieldChart.value !== tile.chart) changes.chart = fieldChart.value;
@@ -469,7 +698,7 @@ export function createDashboardView({ onAskAbout, onMissing }) {
         return;
       }
       try {
-        render(await api.updateTile(board.id, tile.id, changes), [tile.id]);
+        render(await api.updateTile(board.id, tile.id, changes), [tile.id], "Saved");
         toast("Saved the chart");
       } catch (err) {
         message.textContent = err.message;
@@ -477,8 +706,10 @@ export function createDashboardView({ onAskAbout, onMissing }) {
         save.disabled = false;
       }
     });
+    editor.addEventListener("keydown", (event) => { if (event.key === "Escape") render(board); });
     slot.classList.add("tile-wide");
     slot.replaceChildren(editor);
+    if (!existing) slot.scrollIntoView({ behavior: "smooth", block: "center" });
     fieldTitle.focus();
   }
 
@@ -519,13 +750,29 @@ export function createDashboardView({ onAskAbout, onMissing }) {
       }
       try {
         await api.deleteDashboard(board.id);
+        boardsChanged();
         toast(`Deleted “${board.title}”`);
         onMissing();
       } catch (err) {
         toast(err.message);
       }
     });
-    openMenu(more, [confirmDelete], { label: "Dashboard actions" });
+    openMenu(more, [
+      { label: "Duplicate", onSelect: async () => {
+        try {
+          const copy = await api.duplicateDashboard(board.id);
+          boardsChanged();
+          toast(`Created “${copy.title}”`);
+          onOpen?.(copy.id);
+        } catch (err) {
+          toast(err.message);
+        }
+      } },
+      { label: "Present full screen", onSelect: () => setPresenting(true) },
+      { label: "Print or save as PDF", onSelect: () => window.print() },
+      "separator",
+      confirmDelete,
+    ], { label: "Dashboard actions" });
   });
 
   // ------------------------------------------------------------- history
@@ -586,6 +833,7 @@ export function createDashboardView({ onAskAbout, onMissing }) {
       const result = await api.editWithAI(board.id, text, { tileId: scopeTile?.id, version: board.version }, (e) => progress.event(e), controller.signal);
       input.value = "";
       if (result.saved) {
+        boardsChanged();
         const changed = result.changes.filter((c) => c.tile_id && c.kind !== "removed").map((c) => c.tile_id);
         render(result.dashboard, changed);
         setScope(null);

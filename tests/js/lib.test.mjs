@@ -171,3 +171,24 @@ test("waitingText explains rate-limit waits", async () => {
   assert.match(waitingText({ seconds: 11.6, status: 429 }), /per-minute limit; waiting 12 s/);
   assert.match(waitingText({ seconds: 0.2, status: 503 }), /trying again in 1 s/);
 });
+
+test("filter helpers", async () => {
+  const lib = await import("../../src/sqlagent/static/js/lib.js");
+  assert.equal(lib.filterQuery({ state: "SP", date_from: "2018-01", category: "" }), "date_from=2018-01&state=SP");
+  assert.ok(lib.sameFilters({ state: "SP", category: "" }, { state: "SP" }));
+  assert.equal(lib.formatMonth("2017-03"), "Mar 2017");
+  assert.deepEqual(lib.monthRange("2017-11", "2018-02"), ["2017-11", "2017-12", "2018-01", "2018-02"]);
+  const presets = lib.periodPresets("2016-09", "2018-09");
+  assert.deepEqual(presets.map((p) => p.label), ["All time", "2016", "2017", "2018", "Last 6 months", "Last 3 months"]);
+  assert.deepEqual([presets[2].date_from, presets[2].date_to], ["2017-01", "2017-12"]);
+  assert.deepEqual([presets[4].date_from, presets[4].date_to], ["2018-03", "2018-08"]);
+  assert.equal(lib.describePeriod({ date_from: "2018-01", date_to: "2018-06" }), "Jan 2018 to Jun 2018");
+  assert.equal(lib.describePeriod({}), "All time");
+});
+
+test("axisLabels shows the year only where it changes", async () => {
+  const { axisLabels } = await import("../../src/sqlagent/static/js/lib.js");
+  const labels = ["2017-11", "2017-12", "2018-01", "2018-02", "2018-03"];
+  assert.deepEqual(axisLabels(labels, [0, 2, 4]), ["Nov 2017", "Jan 2018", "Mar"]);
+  assert.deepEqual(axisLabels(["2016", "2017"], [0, 1]), ["2016", "2017"]);
+});

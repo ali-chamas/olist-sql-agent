@@ -174,3 +174,57 @@ def test_titles_are_cleaned_and_bounded(ws: Workspace) -> None:
     assert ws.create("").title == "Untitled dashboard"
     with pytest.raises(EditError, match="longer"):
         ws.create("x" * 121)
+
+
+def test_text_tiles_keep_line_breaks_and_refuse_queries(ws) -> None:
+    from sqlagent.workspace import EditError, add_text_tile, update_tile
+
+    board = ws.create("Notes")
+    add_text_tile(board, "Delivery", "Late orders get worse reviews.\n\n\n\nSee below.  ")
+    tile = board.tiles[0]
+    assert (tile.chart, tile.sql, tile.size, tile.note) == (
+        "text",
+        "",
+        "full",
+        "Late orders get worse reviews.\n\nSee below.",
+    )
+    with pytest.raises(EditError):
+        update_tile(board, None, tile.id, sql="SELECT 1")
+    update_tile(board, None, tile.id, note="Updated.")
+    saved = ws.save(board, "you", "text")
+    assert saved.tiles[0].note == "Updated."
+    with pytest.raises(EditError):
+        add_text_tile(board, "", "  ")
+
+
+def test_duplicate_copies_tiles_and_filters_with_new_ids(ws) -> None:
+    from sqlagent.workspace import add_text_tile
+
+    board = ws.create("Growth")
+    add_text_tile(board, "Intro", "Hello")
+    board.filters = {"state": "SP"}
+    board = ws.save(board, "you", "setup")
+    copy = ws.duplicate(board.id)
+    assert copy.id != board.id and copy.title == "Copy of Growth"
+    assert copy.filters == {"state": "SP"} and copy.tiles[0].note == "Hello"
+    assert copy.tiles[0].id != board.tiles[0].id
+    assert ws.revisions(copy.id)[0]["summary"] == "Copied 1 tile"
+
+
+def test_old_app_databases_gain_the_filters_column(tmp_path) -> None:
+    import sqlite3
+
+    from sqlagent.workspace import Workspace
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE dashboards (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', "
+        "version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO dashboards VALUES ('d_old', 'Old', '', 1, 'x', 'x')")
+    conn.commit()
+    conn.close()
+    workspace = Workspace(path)
+    assert workspace.get("d_old").filters == {}
+    workspace.close()

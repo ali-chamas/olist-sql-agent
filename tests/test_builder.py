@@ -138,3 +138,23 @@ def test_invalid_turns_after_changes_keep_the_changes(db: ReadOnlyDatabase) -> N
     llm = FakeLLM([call("add_tile", title="By state", sql=BY_STATE), text_turn(""), text_turn(""), text_turn("")])
     result = DashboardAgent(llm, db).run(board(), "add orders by state")
     assert result.status == "done" and len(result.dashboard.tiles) == 2
+
+
+def test_agent_sets_filters_and_adds_text(db: ReadOnlyDatabase) -> None:
+    llm = FakeLLM(
+        [
+            call("set_filters", state="ZZ"),
+            turn(
+                ("set_filters", {"date_from": "2018-01", "state": "SP"}),
+                ("add_text", {"title": "Sao Paulo", "text": "2018 only."}),
+            ),
+            call("finish", summary="Filtered to SP in 2018."),
+        ]
+    )
+    result = DashboardAgent(llm, db).run(board(), "only Sao Paulo in 2018, with a heading")
+    assert result.status == "done"
+    assert result.steps[0].ok is False and "Allowed states: RJ, SP" in result.steps[0].error
+    assert result.dashboard.filters == {"date_from": "2018-01", "state": "SP"}
+    assert result.dashboard.tiles[-1].chart == "text" and result.dashboard.tiles[-1].note == "2018 only."
+    assert result.summary == "Added “Sao Paulo”, Set the filters to 2018-01 to end, customer state SP"
+    assert '"filters": "2018-01 to end' not in build_request(board(), "x", None)

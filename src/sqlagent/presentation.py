@@ -6,7 +6,8 @@ own data, so the frontend only draws.
 
 Forms:
     kpi    one row of headline numbers            -> stat tiles
-    line   a value over time (4 or more periods)  -> line chart, up to 3 series
+    line   a value over time (4 or more periods)  -> line chart, up to 5 series; a long result
+           (period, category, value) is pivoted into one series per category
     bar    a value across 2 to 25 categories      -> ranked horizontal bars
     table  everything else
 """
@@ -18,7 +19,7 @@ from collections.abc import Sequence
 from typing import Any
 
 MAX_BAR_ROWS = 25
-MAX_LINE_SERIES = 3
+MAX_LINE_SERIES = 5
 MIN_LINE_POINTS = 4
 MAX_KPIS = 6
 
@@ -75,7 +76,13 @@ def suggest_chart(columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> dict
 
     if len(rows) == 1:
         return _kpi(columns, rows[0], numeric, text)
-    if temporal and numeric and len(rows) >= MIN_LINE_POINTS:
+    if temporal and numeric and len(text) == 1 and len(numeric) == 1:
+        pivoted = _pivot_line(columns, rows, temporal[0], text[0], numeric[0])
+        if pivoted and len(pivoted["labels"]) >= MIN_LINE_POINTS:
+            return pivoted
+    if temporal and numeric and len(rows) >= MIN_LINE_POINTS and not text:
+        return _line(columns, rows, temporal[0], numeric)
+    if temporal and numeric and len(rows) >= MIN_LINE_POINTS and len({r[temporal[0]] for r in rows}) == len(rows):
         return _line(columns, rows, temporal[0], numeric)
     if len(rows) > MAX_BAR_ROWS or not numeric:
         return {"type": "table"}
@@ -113,6 +120,43 @@ def _line(columns: Sequence[str], rows: Sequence[Sequence[Any]], x: int, numeric
     # Series with different units cannot share one axis: keep those matching the first.
     series = [s for s in series if s["format"] == series[0]["format"]]
     return {"type": "line", "x": columns[x], "labels": [str(r[x]) for r in ordered], "series": series}
+
+
+def _pivot_line(
+    columns: Sequence[str], rows: Sequence[Sequence[Any]], x: int, key: int, value: int
+) -> dict[str, Any] | None:
+    """(period, category, value) rows as one line per category, the largest categories first.
+
+    Returns None when each period appears once (nothing to pivot) or there are too many periods missing.
+    """
+    periods = sorted({str(r[x]) for r in rows if r[x] is not None})
+    if len(periods) == len(rows) or len(periods) < 2:
+        return None
+    totals: dict[str, float] = {}
+    cells: dict[tuple[str, str], Any] = {}
+    for r in rows:
+        if r[x] is None or r[value] is None:
+            continue
+        name = str(r[key]) if r[key] is not None else "(none)"
+        totals[name] = totals.get(name, 0) + r[value]
+        cells[(name, str(r[x]))] = r[value]
+    ranked = sorted(totals, key=lambda n: totals[n], reverse=True)
+    shown = ranked[:MAX_LINE_SERIES]
+    chart: dict[str, Any] = {
+        "type": "line",
+        "x": columns[x],
+        "labels": periods,
+        "series": [
+            {"name": name, "format": value_format(columns[value]), "values": [cells.get((name, p)) for p in periods]}
+            for name in shown
+        ],
+        "by": columns[key],
+    }
+    if len(ranked) > len(shown):
+        chart["note"] = (
+            f"The {len(shown)} largest of {len(ranked)} {columns[key]} values are shown. The table has them all."
+        )
+    return chart
 
 
 def _bar(
@@ -169,6 +213,10 @@ def chart_for(columns: Sequence[str], rows: Sequence[Sequence[Any]], chart: str 
             raise ChartMismatch(f"A kpi tile needs exactly one row with 1 to {MAX_KPIS} numeric columns.")
         return _kpi(columns, rows[0], numeric, text)
     if chart == "line":
+        if temporal and numeric and len(text) == 1 and len(numeric) == 1:
+            pivoted = _pivot_line(columns, rows, temporal[0], text[0], numeric[0])
+            if pivoted:
+                return pivoted
         if not temporal or not numeric or len(rows) < 2:
             raise ChartMismatch(
                 "A line chart needs a time column (YYYY-MM, YYYY-MM-DD or a year) and a numeric column, "
