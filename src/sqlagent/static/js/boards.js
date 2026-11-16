@@ -1,9 +1,10 @@
 // The built-in overview: fixed queries, no model calls, a year filter with comparisons.
 // Any tile can start a conversation in Ask, with its query as the context.
 
-import { getOverview } from "./api.js";
+import { copyOverview, getOverview } from "./api.js";
 import { renderFigure } from "./charts.js";
 import { clear, el, toolButton } from "./dom.js";
+import { toast } from "./toast.js";
 
 function tile(title, payload, { wide = false, note = "", sql = "", onExplore = null, onRemove = null } = {}) {
   if (payload.error) {
@@ -19,12 +20,28 @@ function tile(title, payload, { wide = false, note = "", sql = "", onExplore = n
   return renderFigure(payload, { title, note, tools, className: wide ? "tile tile-wide" : "tile" });
 }
 
-export function createOverviewView({ onExplore }) {
+export function createOverviewView({ onExplore, onOpen }) {
+  const copy = toolButton("duplicate", "Make an editable copy", async () => {
+    copy.disabled = true;
+    try {
+      const board = await copyOverview();
+      window.dispatchEvent(new Event("boards:changed"));
+      toast("Copied the overview. Change it in words or by hand, and add filters.");
+      onOpen(board.id);
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      copy.disabled = false;
+    }
+  });
   const grid = el("div", { class: "tiles" });
   const filter = el("div", { class: "segmented", role: "group", "aria-label": "Year" });
   const node = el("div", { class: "view view-wide" }, [
     el("header", { class: "view-head" }, [
-      el("a", { class: "back-link", href: "#/dashboards", text: "All dashboards" }),
+      el("div", { class: "view-head-row" }, [
+        el("a", { class: "back-link", href: "#/dashboards", text: "All dashboards" }),
+        copy,
+      ]),
       el("h1", { class: "view-title", text: "Marketplace overview" }),
       el("p", { class: "view-lead", text: "The marketplace at a glance. These are fixed queries, so this page uses no model tokens. Choose Ask on any chart to dig into it." }),
     ]),

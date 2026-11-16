@@ -111,6 +111,24 @@ TILES: tuple[Tile, ...] = (
 )
 
 
+OVERVIEW_TITLE = "Marketplace overview"
+OVERVIEW_DESCRIPTION = "Headline numbers, revenue trend, categories, states and delivery. Edit it like any dashboard."
+
+
+def editable_tiles() -> list[dict[str, str]]:
+    """The overview's tiles as saved-dashboard tiles, for "Make an editable copy"."""
+    return [
+        {
+            "title": tile.title,
+            "sql": tile_sql(tile),
+            "chart": "kpi" if tile.id == "kpis" else "line" if tile.month_window else "bar",
+            "size": "full" if tile.wide else "half",
+            "note": tile_note(tile)[:240],
+        }
+        for tile in TILES
+    ]
+
+
 def year_filter(year: str | None) -> str:
     """A constant SQL fragment for a whitelisted year, or '' for all years."""
     if not year or year == "all":

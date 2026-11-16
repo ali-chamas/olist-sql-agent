@@ -107,6 +107,7 @@ export const getTileData = (id, tileId, filters = {}) => {
   const query = filterQuery(filters);
   return getJSON(`${tile(id, tileId)}/data${query ? `?${query}` : ""}`);
 };
+export const copyOverview = () => send("POST", "/api/dashboards/from-overview", {});
 export const duplicateDashboard = (id) => send("POST", `${board(id)}/duplicate`, {});
 export const addTextTile = (id, fields) => send("POST", `${board(id)}/tiles`, { kind: "text", ...fields });
 let filterOptions = null;

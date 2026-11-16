@@ -7,6 +7,7 @@
     PATCH  /api/dashboards/{id}                             {title?, description?, filters?, version?}
     DELETE /api/dashboards/{id}
     POST   /api/dashboards/{id}/duplicate                   a copy, titled "Copy of ..."
+    POST   /api/dashboards/from-overview                    an editable copy of the built-in overview
     POST   /api/dashboards/{id}/agent                       edit with a prompt {prompt, tile_id?, version?} (events)
     GET    /api/dashboards/{id}/revisions                   history
     POST   /api/dashboards/{id}/restore                     {version}
@@ -38,6 +39,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from .builder import BuildResult, DashboardAgent
+from .dashboards import OVERVIEW_DESCRIPTION, OVERVIEW_TITLE, editable_tiles
 from .db import QueryError, ReadOnlyDatabase
 from .filters import FilterError, FilterOptions, Filters, apply_filters, describe, load_options, validate
 from .presentation import ChartMismatch, chart_for, suggest_chart
@@ -48,6 +50,7 @@ from .workspace import (
     EditError,
     MissingTile,
     NotFound,
+    Tile,
     Workspace,
     add_text_tile,
     add_tile,
@@ -217,6 +220,16 @@ def workspace_routes(
 
     async def duplicate(request: Request) -> JSONResponse:
         result = await guarded(lambda: workspace.duplicate(request.path_params["dashboard_id"]))
+        if isinstance(result, JSONResponse):
+            return result
+        return JSONResponse(json.loads(json.dumps(result.to_dict(), default=str)), status_code=201)
+
+    async def from_overview(request: Request) -> JSONResponse:
+        def work() -> Dashboard:
+            tiles = [Tile(id="", **t) for t in editable_tiles()]
+            return workspace.create_from(OVERVIEW_TITLE, OVERVIEW_DESCRIPTION, tiles)
+
+        result = await guarded(work)
         if isinstance(result, JSONResponse):
             return result
         return JSONResponse(json.loads(json.dumps(result.to_dict(), default=str)), status_code=201)
@@ -396,6 +409,7 @@ def workspace_routes(
         Route(base, list_dashboards, methods=["GET"]),
         Route(base, create_dashboard, methods=["POST"]),
         Route(base + "/build", build_new, methods=["POST"]),
+        Route(base + "/from-overview", from_overview, methods=["POST"]),
         Route(one, get_dashboard, methods=["GET"]),
         Route(one, patch_dashboard, methods=["PATCH"]),
         Route(one, delete_dashboard, methods=["DELETE"]),

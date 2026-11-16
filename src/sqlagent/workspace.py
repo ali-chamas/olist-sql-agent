@@ -299,6 +299,14 @@ class Workspace:
             expected_version=copy_.version,
         )
 
+    def create_from(self, title: str, description: str, tiles: list[Tile], author: str = "you") -> Dashboard:
+        """A new dashboard holding the given tiles, saved as its first edit."""
+        board = self.create(title, description, author=author)
+        board.tiles = [Tile(**{**asdict(t), "id": new_id("t")}) for t in tiles[:MAX_TILES]]
+        return self.save(
+            board, author=author, summary=f"Added {len(board.tiles)} tiles", expected_version=board.version
+        )
+
     def delete(self, dashboard_id: str) -> None:
         with self._lock, self._conn:
             deleted = self._conn.execute("DELETE FROM dashboards WHERE id = ?", (dashboard_id,)).rowcount

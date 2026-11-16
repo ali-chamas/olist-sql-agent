@@ -717,3 +717,12 @@ body.presenting .board-description:placeholder-shown { display: none; }
 .tile-live { border-color: var(--mark); box-shadow: 0 0 0 2px color-mix(in srgb, var(--mark) 55%, transparent); }
 @keyframes tile-in { from { opacity: 0; transform: translateY(6px); } }
 .tile-draft:not(.tile-live) { animation: none; }
+
+.view-head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+.board-suggest { padding: 0 2px; }
+.board-suggest[hidden] { display: none; }
+.cards-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 34px 0 12px; }
+.cards-head .cards-title { margin: 0; }
+.board-search { max-width: 260px; }
+.board-search[hidden] { display: none; }

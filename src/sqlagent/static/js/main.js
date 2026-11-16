@@ -88,7 +88,7 @@ const views = {
   ask: createAskView({ onAsked: () => { renderRecent(); refreshStatus(); }, onOpen: go }),
   dashboards: createDashboardsView({ onOpen: (id, options) => { boardOptions = options; go(`d/${encodeURIComponent(id)}`); } }),
   board: createDashboardView({ onAskAbout: explore, onMissing: () => go("dashboards"), onOpen: (id) => go(`d/${id}`) }),
-  overview: createOverviewView({ onExplore: explore }),
+  overview: createOverviewView({ onExplore: explore, onOpen: (id) => go(`d/${encodeURIComponent(id)}`) }),
   data: createSchemaView(),
 };
 
@@ -256,6 +256,11 @@ window.addEventListener("storage", renderRecent);
 document.addEventListener("keydown", (event) => {
   if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey && !typingInField(event.target)) {
     event.preventDefault();
+    // On a dashboard, "/" goes to its prompt bar; anywhere else, to Ask.
+    if (currentRoute().view === "board") {
+      views.board.focus();
+      return;
+    }
     go("ask");
     views.ask.focus();
   }

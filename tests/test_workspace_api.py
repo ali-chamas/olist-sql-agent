@@ -147,3 +147,13 @@ def test_build_creates_a_dashboard_only_when_tiles_were_added(db: ReadOnlyDataba
 def test_routes_are_absent_without_a_workspace(db: ReadOnlyDatabase) -> None:
     app = create_app(SQLAgent(FakeLLM([]), db))
     assert asgi_request(app, "GET", "/api/dashboards")[0] == 404
+
+
+def test_editable_copy_of_the_overview(db: ReadOnlyDatabase, ws: Workspace) -> None:
+    app, _ = make(db, ws)
+    status, board = asgi_request(app, "POST", "/api/dashboards/from-overview", {})
+    assert status == 201 and board["title"] == "Marketplace overview" and len(board["tiles"]) == 6
+    assert [t["chart"] for t in board["tiles"]][:2] == ["kpi", "line"]
+    for tile in board["tiles"]:
+        status, data = asgi_request(app, "GET", f"/api/dashboards/{board['id']}/tiles/{tile['id']}/data")
+        assert status == 200 and "error" not in data, (tile["title"], data)

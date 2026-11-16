@@ -14,7 +14,8 @@ const BUILD_EXAMPLES = [
   "Delivery performance: late-delivery rate by state and its effect on review scores",
   "Category deep dive for 2018: revenue, orders and average order value by category",
 ];
-const EDIT_EXAMPLES = ["Add revenue by customer state", "Make the monthly chart full width", "Add a table of the top 10 sellers"];
+const EDIT_EXAMPLES = ["Add revenue by customer state", "Only show 2018", "Add a table of the top 10 sellers", "Add a heading that explains the numbers"];
+const TILE_EXAMPLES = ["Make it a table", "Show the top 5 only", "Break it down by month", "Make it full width"];
 const CHART_LABELS = { auto: "Automatic", kpi: "Headline numbers", bar: "Bar chart", line: "Line chart", table: "Table" };
 const HIGHLIGHT_MS = 6000;
 
@@ -87,6 +88,7 @@ function createProgress() {
 
 export function createDashboardsView({ onOpen }) {
   const grid = el("div", { class: "board-cards" });
+  const search = el("input", { type: "search", class: "field-input board-search", placeholder: "Find a dashboard", "aria-label": "Find a dashboard", hidden: true });
   const prompt = el("textarea", {
     class: "builder-input", rows: 3, maxLength: 1000, "aria-label": "Describe the dashboard you need",
     placeholder: "Describe the dashboard you need, for example: revenue trend, top categories and repeat customers for the marketing team",
@@ -123,7 +125,7 @@ export function createDashboardsView({ onOpen }) {
     ]),
     form,
     preview,
-    el("h2", { class: "section-title cards-title", text: "Your dashboards" }),
+    el("div", { class: "cards-head" }, [el("h2", { class: "section-title cards-title", text: "Your dashboards" }), search]),
     grid,
   ]);
 
@@ -231,10 +233,20 @@ export function createDashboardsView({ onOpen }) {
     el("div", { class: "board-card-meta" }, el("span", { text: "Built in, read-only" })),
   ]);
 
+  let items = [];
+  function drawCards() {
+    const query = search.value.trim().toLowerCase();
+    const shown = items.filter((i) => !query || `${i.title} ${i.description}`.toLowerCase().includes(query));
+    clear(grid).append(...(query ? [] : [builtIn]), ...shown.map(card));
+    if (query && !shown.length) grid.append(el("p", { class: "hint", text: `No dashboard matches “${search.value.trim()}”.` }));
+  }
+  search.addEventListener("input", drawCards);
+
   async function show() {
     try {
-      const items = await api.listDashboards();
-      clear(grid).append(builtIn, ...items.map(card));
+      items = await api.listDashboards();
+      search.hidden = items.length < 6;
+      drawCards();
     } catch (err) {
       clear(grid).append(el("p", { class: "edit-error", text: err.message }));
     }
@@ -387,7 +399,22 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
   progress.node.hidden = true;
   const outcome = el("div", { class: "board-outcome", hidden: true });
   const form = el("form", { class: "composer" }, [input, submit, stop]);
-  const bar = el("div", { class: "composer-bar board-bar" }, [progress.node, outcome, scope, form]);
+  const suggest = el("ul", { class: "chip-list board-suggest", hidden: true, "aria-label": "Suggestions" });
+  const bar = el("div", { class: "composer-bar board-bar" }, [progress.node, outcome, scope, suggest, form]);
+
+  // Suggestions under the prompt bar while it is focused and empty.
+  function showSuggestions() {
+    const examples = scopeTile ? TILE_EXAMPLES : EDIT_EXAMPLES;
+    suggest.replaceChildren(...examples.map((text) => el("li", {}, el("button", {
+      type: "button", class: "chip", text,
+      onmousedown: (event) => event.preventDefault(), // keep focus in the input
+      onclick: () => { input.value = text; suggest.hidden = true; input.focus(); },
+    }))));
+    suggest.hidden = Boolean(input.value.trim()) || Boolean(controller);
+  }
+  input.addEventListener("focus", showSuggestions);
+  input.addEventListener("input", () => { suggest.hidden = Boolean(input.value.trim()); });
+  input.addEventListener("blur", () => { suggest.hidden = true; });
 
   const node = el("div", { class: "view view-wide view-board" }, [
     el("header", { class: "board-head" }, [
@@ -581,6 +608,7 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
     const last = board.tiles.length - 1;
     moreButton.addEventListener("click", () => openMenu(moreButton, [
       { label: "Edit text", onSelect: () => openTextEditor(tile) },
+      { label: "Duplicate", onSelect: () => apply(api.addTextTile(board.id, { title: tile.title, text: tile.note, size: tile.size, position: index + 1, version: board.version }), "Duplicated the text") },
       { label: tile.size === "full" ? "Make half width" : "Make full width",
         onSelect: () => apply(api.updateTile(board.id, tile.id, { size: tile.size === "full" ? "half" : "full", version: board.version }), "Resized the text") },
       { label: "Move earlier", disabled: index === 0, onSelect: () => apply(api.moveTile(board.id, tile.id, index - 1, board.version), "Moved the text") },
@@ -744,6 +772,9 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
         onSelect: () => apply(api.updateTile(board.id, tile.id, { size: tile.size === "full" ? "half" : "full", version: board.version }), "Resized the chart") },
       { label: "Move earlier", disabled: index === 0, onSelect: () => apply(api.moveTile(board.id, tile.id, index - 1, board.version), "Moved the chart") },
       { label: "Move later", disabled: index === last, onSelect: () => apply(api.moveTile(board.id, tile.id, index + 1, board.version), "Moved the chart") },
+      { label: "Duplicate", onSelect: () => apply(api.addTile(board.id, {
+        title: `Copy of ${tile.title}`.slice(0, 120), sql: tile.sql, chart: tile.chart, size: tile.size, note: tile.note, position: index + 1, version: board.version,
+      }), `Duplicated “${tile.title}”`) },
       { label: "Ask a question about it", disabled: Boolean(payload.error), onSelect: () => onAskAbout({ title: tile.title, sql: tile.sql, payload }) },
       { label: "Download CSV", disabled: Boolean(payload.error) || !payload.rows?.length,
         onSelect: () => download(`${slugify(tile.title)}.csv`, toCSV(payload.columns, payload.rows)) },
@@ -936,6 +967,7 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
     const text = input.value.trim();
     if (text.length < 3 || controller || !board) return;
     controller = new AbortController();
+    suggest.hidden = true;
     submit.hidden = true;
     stop.hidden = false;
     outcome.hidden = true;
