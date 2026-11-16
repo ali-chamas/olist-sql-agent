@@ -20,8 +20,9 @@ from typing import Any
 from .agent import EMPTY_TURN, Step, format_result
 from .catalog import TABLES
 from .db import QueryError, ReadOnlyDatabase
-from .filters import FilterError, FilterOptions, Filters, describe, load_options, validate
+from .filters import FilterError, FilterOptions, Filters, apply_filters, describe, load_options, validate
 from .llm import INVALID_CALL_TEXT, LLMClient, LLMError, Message, ToolCall, ToolSpec, Usage, report_waits
+from .presentation import ChartMismatch, chart_for, suggest_chart
 from .prompts import schema_text
 from .workspace import (
     TEXT,
@@ -351,8 +352,12 @@ class DashboardAgent:
                 if finished:
                     messages.append(self._tool_message(call, "Ignored: the run already finished.", True))
                     continue
+                changes_before = len(result.changes)
                 text, is_error, finished = self._handle(call, draft, result)
-                emit({"type": "step", "step": asdict(result.steps[-1])})
+                event: dict[str, Any] = {"type": "step", "step": asdict(result.steps[-1])}
+                if len(result.changes) > changes_before:
+                    event["draft"] = self._draft_event(draft, result.changes[-1])
+                emit(event)
                 messages.append(self._tool_message(call, text, is_error))
             if finished:
                 break
@@ -366,6 +371,39 @@ class DashboardAgent:
     @staticmethod
     def _tool_message(call: ToolCall, content: str, is_error: bool) -> Message:
         return Message(role="tool", content=content, tool_call_id=call.id, name=call.name, is_error=is_error)
+
+    def _draft_event(self, draft: Dashboard, change: Change) -> dict[str, Any]:
+        """The draft's layout after a change, with the changed tile's rows, so the page can draw it live."""
+        event: dict[str, Any] = {
+            "title": draft.title,
+            "description": draft.description,
+            "filters": dict(draft.filters),
+            "tiles": [
+                {"id": t.id, "title": t.title, "chart": t.chart, "size": t.size, "note": t.note} for t in draft.tiles
+            ],
+        }
+        tile = next((t for t in draft.tiles if t.id == change.tile_id), None)
+        if tile is not None and tile.chart != TEXT and change.kind in ("added", "updated"):
+            event["preview"] = {"tile_id": tile.id, "payload": self._preview(tile.sql, tile.chart, draft)}
+        return event
+
+    def _preview(self, sql: str, chart: str, draft: Dashboard) -> dict[str, Any]:
+        try:
+            query = self.db.execute(apply_filters(sql, Filters.from_dict(draft.filters)), max_rows=200)
+        except QueryError as exc:
+            return {"error": exc.message}
+        if not query.rows:
+            return {"columns": query.columns, "rows": [], "chart": {"type": "empty"}}
+        try:
+            payload_chart = chart_for(query.columns, query.rows, chart)
+        except ChartMismatch:
+            payload_chart = suggest_chart(query.columns, query.rows)
+        return {
+            "columns": query.columns,
+            "rows": [list(r) for r in query.rows],
+            "truncated": query.truncated,
+            "chart": payload_chart,
+        }
 
     def _handle(self, call: ToolCall, draft: Dashboard, result: BuildResult) -> tuple[str, bool, bool]:
         args = call.arguments

@@ -158,3 +158,24 @@ def test_agent_sets_filters_and_adds_text(db: ReadOnlyDatabase) -> None:
     assert result.dashboard.tiles[-1].chart == "text" and result.dashboard.tiles[-1].note == "2018 only."
     assert result.summary == "Added “Sao Paulo”, Set the filters to 2018-01 to end, customer state SP"
     assert '"filters": "2018-01 to end' not in build_request(board(), "x", None)
+
+
+def test_steps_carry_the_draft_and_a_preview_of_the_changed_tile(db: ReadOnlyDatabase) -> None:
+    events: list[dict] = []
+    llm = FakeLLM(
+        [
+            turn(
+                ("add_tile", {"title": "Orders by state", "sql": BY_STATE, "chart": "bar"}),
+                ("remove_tile", {"tile_id": "t_a"}),
+            ),
+            call("finish", summary="done"),
+        ]
+    )
+    DashboardAgent(llm, db).run(board(), "swap", on_event=events.append)
+    steps = [e for e in events if e["type"] == "step"]
+    added, removed = steps[0]["draft"], steps[1]["draft"]
+    assert [t["title"] for t in added["tiles"]] == ["Totals", "Orders by state"]
+    assert added["preview"]["payload"]["chart"]["type"] == "bar"
+    assert added["preview"]["tile_id"] == added["tiles"][1]["id"]
+    assert [t["title"] for t in removed["tiles"]] == ["Orders by state"] and "preview" not in removed
+    assert "draft" not in steps[2]  # finish changes nothing

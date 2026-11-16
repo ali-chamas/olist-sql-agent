@@ -704,3 +704,16 @@ body.presenting .board-tiles .tile .figure-head { cursor: auto; }
 /* Bars that filter the dashboard when clicked. */
 .bars-filter .bar-row { cursor: pointer; }
 .bars-filter .bar-row:hover .bar-label { text-decoration: underline; text-underline-offset: 3px; }
+
+body.presenting .board-description:placeholder-shown { display: none; }
+:root[data-theme="dark"] .brand-mark { box-shadow: 0 0 0 1px #3a4352; }
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .brand-mark { box-shadow: 0 0 0 1px #3a4352; } }
+
+/* The dashboard the AI is building, drawn live: the newest tile is marked with the highlighter. */
+.build-preview { margin-top: 22px; }
+.build-preview-label { font-size: 13px; color: var(--muted); }
+.build-preview-title { font: 600 22px/1.3 var(--serif); margin: 2px 0 14px; }
+.tile-draft { animation: tile-in 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.tile-live { border-color: var(--mark); box-shadow: 0 0 0 2px color-mix(in srgb, var(--mark) 55%, transparent); }
+@keyframes tile-in { from { opacity: 0; transform: translateY(6px); } }
+.tile-draft:not(.tile-live) { animation: none; }

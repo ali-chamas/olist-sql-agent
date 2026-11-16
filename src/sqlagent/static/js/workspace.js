@@ -97,6 +97,13 @@ export function createDashboardsView({ onOpen }) {
   const progress = createProgress();
   const outcome = el("div", { class: "builder-outcome" });
   progress.node.hidden = true;
+  const previewTitle = el("h2", { class: "build-preview-title" });
+  const previewGrid = el("div", { class: "tiles board-tiles build-preview-grid" });
+  const preview = el("section", { class: "build-preview", hidden: true, "aria-live": "polite", "aria-label": "Dashboard being built" }, [
+    el("p", { class: "build-preview-label", text: "Building" }),
+    previewTitle,
+    previewGrid,
+  ]);
 
   const form = el("form", { class: "builder" }, [
     prompt,
@@ -115,6 +122,7 @@ export function createDashboardsView({ onOpen }) {
       el("p", { class: "view-lead", text: "Describe a dashboard and the AI builds it from read-only queries. Open any dashboard to change it in plain language." }),
     ]),
     form,
+    preview,
     el("h2", { class: "section-title cards-title", text: "Your dashboards" }),
     grid,
   ]);
@@ -134,7 +142,16 @@ export function createDashboardsView({ onOpen }) {
     progress.node.hidden = false;
     progress.start();
     try {
-      const result = await api.buildWithAI(text, (e) => progress.event(e), controller.signal);
+      const payloads = new Map();
+      const result = await api.buildWithAI(text, (e) => {
+        progress.event(e);
+        const draft = e.event === "step" && e.data.draft;
+        if (!draft) return;
+        if (draft.preview) payloads.set(draft.preview.tile_id, draft.preview.payload);
+        preview.hidden = false;
+        previewTitle.textContent = draft.title && draft.title !== "Untitled dashboard" ? draft.title : "New dashboard";
+        drawDraft(previewGrid, draft, payloads, () => null, draft.preview?.tile_id);
+      }, controller.signal);
       if (result.saved && result.dashboard) {
         prompt.value = "";
         boardsChanged();
@@ -150,6 +167,8 @@ export function createDashboardsView({ onOpen }) {
     } finally {
       progress.stop();
       progress.node.hidden = true;
+      preview.hidden = true;
+      clear(previewGrid);
       controller = null;
       build.hidden = false;
       blank.disabled = false;
@@ -228,6 +247,52 @@ export function createDashboardsView({ onOpen }) {
   }
 
   return { node, show, startBuild };
+}
+
+/**
+ * Draw a dashboard the AI is still working on: its tiles in order, each with the rows the agent
+ * just ran (``payloads``) or an earlier result (``fallback``), the newest one marked.
+ */
+const draftFigures = new WeakMap(); // grid -> Map(tile id -> { stamp, figure }), so unchanged tiles are not redrawn
+
+function drawDraft(grid, draft, payloads, fallback, newest) {
+  const widths = layout(draft.tiles);
+  if (!draftFigures.has(grid) || !grid.querySelector(".tile-draft")) draftFigures.set(grid, new Map());
+  const known = draftFigures.get(grid);
+  clear(grid).append(...draft.tiles.map((tile, i) => {
+    const slot = el("div", { class: widths[i] === "full" ? "tile-slot tile-wide" : "tile-slot" });
+    const stamp = JSON.stringify([tile.title, tile.chart, tile.note, Boolean(payloads.get(tile.id))]);
+    const reuse = known.get(tile.id);
+    if (reuse && reuse.stamp === stamp && tile.id !== newest) {
+      reuse.figure.classList.remove("tile-live");
+      slot.append(reuse.figure);
+      return slot;
+    }
+    let figure;
+    if (tile.chart === "text") {
+      figure = el("section", { class: "figure tile tile-text" }, [
+        tile.title ? el("h3", { class: "text-tile-title", text: tile.title }) : null,
+        tile.note ? el("div", { class: "text-tile-body" }, tile.note.split(/\n{2,}/).map((p) => el("p", { text: p }))) : null,
+      ]);
+    } else {
+      const payload = payloads.get(tile.id) || fallback(tile.id);
+      if (!payload) {
+        figure = el("section", { class: "figure tile tile-loading" }, [el("h3", { class: "figure-title", text: tile.title })]);
+      } else if (payload.error || payload.chart?.type === "empty") {
+        figure = el("section", { class: "figure tile" }, [
+          el("h3", { class: "figure-title", text: tile.title }),
+          el("p", { class: "table-note", text: payload.error || "No rows yet" }),
+        ]);
+      } else {
+        figure = renderFigure(payload, { title: tile.title, note: tile.note, className: "tile" });
+      }
+    }
+    figure.classList.add("tile-draft");
+    if (tile.id === newest) figure.classList.add("tile-live");
+    known.set(tile.id, { stamp, figure });
+    slot.append(figure);
+    return slot;
+  }));
 }
 
 /** Tell the rest of the app (the sidebar list) that dashboards were added, renamed or removed. */
@@ -865,7 +930,19 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
     progress.start();
     const before = board.version;
     try {
-      const result = await api.editWithAI(board.id, text, { tileId: scopeTile?.id, version: board.version }, (e) => progress.event(e), controller.signal);
+      const payloads = new Map();
+      let drafted = false;
+      const result = await api.editWithAI(board.id, text, { tileId: scopeTile?.id, version: board.version }, (e) => {
+        progress.event(e);
+        const draft = e.event === "step" && e.data.draft;
+        if (!draft) return;
+        drafted = true;
+        if (draft.preview) payloads.set(draft.preview.tile_id, draft.preview.payload);
+        if (document.activeElement !== title) title.value = draft.title;
+        empty.hidden = draft.tiles.length > 0;
+        drawDraft(grid, draft, payloads, (id) => dataCache.get(id)?.payload, draft.preview?.tile_id);
+      }, controller.signal);
+      if (drafted && !result.saved) render(board); // put back what is saved
       input.value = "";
       if (result.saved) {
         boardsChanged();
@@ -883,6 +960,7 @@ export function createDashboardView({ onAskAbout, onMissing, onOpen }) {
         showOutcome(explainFailure(result), "error");
       }
     } catch (err) {
+      if (board) render(board);
       showOutcome(err.name === "AbortError" ? "Stopped. Nothing was changed." : err.message, err.name === "AbortError" ? "info" : "error");
     } finally {
       progress.stop();
