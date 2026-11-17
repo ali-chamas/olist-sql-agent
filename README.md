@@ -1,61 +1,75 @@
-# Ask Olist: dashboards and answers in plain language, on a private database
+# Ask Olist
 
-A self-hosted analytics workspace in the spirit of Metabase, where nobody has to write SQL. Describe a dashboard and watch an AI agent build it chart by chart; change it by asking ("add revenue by state", "make that a table", "only 2018"); filter it, share it, present it. Every query the model writes is read-only and checked before it runs. The data never leaves your server: the model sees the schema and small result previews only.
+**Dashboards you describe instead of build.** Ask Olist is a self-hosted analytics workspace where a team creates and changes business dashboards in plain language. An AI agent writes the SQL, checks every chart against the real data, and builds the dashboard in front of you, while the database stays private and read-only.
 
-![Describe a dashboard, watch it build, filter it, edit it in words](docs/build.gif)
+![Describing a dashboard, watching it build, filtering it and editing it in words](docs/build.gif)
 
-The demo data is 100,000 orders from Olist, a Brazilian marketplace.
+## Why it exists
 
-## What makes it more than a demo
+In most companies, a marketing or operations team that wants a new chart files a request and waits for an analyst. BI tools such as Metabase, Looker or Power BI shorten that wait, but they still expect someone who knows the schema: which table holds orders, why revenue must be summed per order rather than per item, how a "repeat customer" is defined. General-purpose AI chat assistants can write SQL, but their answers vanish with the conversation, nothing guarantees their queries only read, and using them usually means sending company data to a third party.
 
-- **An agent with real tools, not a chat box.** The dashboard agent edits a draft through `add_tile`, `update_tile`, `move_tile`, `remove_tile`, `add_text`, `set_filters` and `run_sql`. Every tile's SQL is executed and its chart type checked before it is accepted; a refusal goes back to the model, which fixes its query. One request is saved as one version, and Undo restores the one before.
-- **Guardrails enforced by the database.** Four independent layers keep model-written SQL read-only and bounded in time and size; the main one is a SQLite authorizer that cannot be talked around.
-- **Filters without rewriting SQL.** Period, state and category filters apply to every tile by shadowing the tables with filtered common table expressions of the same name. Values are validated against the data before they reach SQL.
-- **Measured, not guessed.** 50 reference questions with gold SQL give an execution-accuracy score, and 14 dashboard requests are checked mechanically (tiles run, charts fit, topics covered, filters set, edits applied). The question harness proves itself with an oracle run that must score 50/50.
-- **Resilient to real free-tier models.** Malformed tool calls are repaired, empty or prose replies are retried, and rate-limit waits are shown to the person instead of a frozen spinner.
-- **No lock-in, no build step.** Two small HTTP adapters (any OpenAI-compatible API, and Claude); a frontend of plain ES modules and SVG with a strict Content-Security-Policy.
+Ask Olist sits between the two. The team describes what it wants to see ("a weekly marketing overview: revenue trend, top categories, repeat customers"), and the agent turns that into a dashboard that is saved, versioned and shared like any BI dashboard. Changing it is another sentence ("only 2018", "add revenue by state", "make that a table"), or a few clicks for anyone who prefers to edit by hand. The model sees the schema and small previews of query results, never the database itself, and with a local model through Ollama nothing leaves your machine at all. Every query runs on your own server, through guardrails that the database itself enforces.
 
-```mermaid
-flowchart LR
-    P[Prompt] --> AG[Dashboard agent]
-    AG <-->|schema, dashboard JSON, tool calls| L[LLM]
-    AG -->|add_tile, update_tile, set_filters...| D[Draft dashboard]
-    D -->|every tile's SQL| G[Guardrails]
-    G -->|SELECT only, 5 s, 200 rows| R[(Business data, read-only)]
-    AG -.->|each step and a live preview, server-sent events| UI[Browser]
-    D -->|one version per request| W[(app.db: dashboards, versions)]
-    UI -->|filters| F[Filtered CTEs] --> G
-```
+It ships with a real dataset to explore: 100,000 orders from Olist, a Brazilian online marketplace, with customers, products, sellers, payments, deliveries and reviews.
+
+## What you can do
+
+- **Build a dashboard from a sentence.** The agent plans the tiles, writes and runs each query, picks a chart that fits the result, and adds headings where context helps. You watch each chart appear as it is added.
+- **Change it by asking.** Use the prompt bar for the whole dashboard, or "Edit with AI" on a single chart: add, remove, reorder, resize, switch a chart to a table, or limit everything to a period, a state or a category.
+- **Explore with filters.** Period, customer state and product category apply to every chart at once. Click a bar to filter by it; save the current filters as the dashboard's default.
+- **Ask one-off questions.** A conversation view answers questions with the figures highlighted, shows every step the agent took and the SQL it ran, suggests follow-ups, and saves any answer to a dashboard.
+- **Share and present.** A filtered view is a link. Present full screen, print or save as PDF, download any chart's data as CSV.
+- **Trust what you see.** Every chart keeps its SQL, which you can read and edit. Every change is a version marked as made by a person or by the AI, and any version can be restored; each AI edit can be undone in one click.
 
 ## Features
 
 | Area | What it does |
 | --- | --- |
-| Build in words | Describe a dashboard and watch it appear tile by tile, with headline numbers, trends, rankings and context text |
-| Edit in words | A prompt bar on every dashboard, and "Edit with AI" on each chart to scope a change to it |
-| Filters | Period (presets or a custom month range), customer state and product category, applied to every tile; click a bar to filter by it; save as the dashboard's default |
-| Share | Filters live in the link; Copy link, present full screen, print or save as PDF, CSV per chart |
-| Edit by hand | Rename, describe, add a chart from SQL or a text tile, change a chart's query, type or width, drag to reorder, duplicate a dashboard |
-| History | Every change is a version marked "by you" or "by the AI"; restore any of them, Undo after each AI edit |
-| Ask | Multi-turn questions with a live step trace, follow-up suggestions, the answer's figures highlighted, and "Add to dashboard" |
-| Charts | Headline numbers, ranked bars, single or multi-series lines (a long result is pivoted into one line per category), tables; chosen by tested rules |
-| Navigate | Sidebar of dashboards, Ctrl+K / Cmd+K command palette, keyboard-readable charts, light and dark themes |
-| Operate | Optional password (`APP_PASSWORD`), rate limits, daily token budget, answer and tile result caches, health check |
+| Build in words | Describe a dashboard and watch it appear tile by tile: headline numbers, trends, rankings and short context text |
+| Edit in words | A prompt bar on every dashboard, with suggestions, and "Edit with AI" on each chart to scope a change to it |
+| Filters | Period (presets or any month range), customer state and product category, applied to every chart; click a bar to filter by it |
+| Share | Filters live in the link; copy link, present full screen, print or save as PDF, CSV per chart |
+| Edit by hand | Rename and describe; add a chart from SQL or a text block; change a chart's query, type or width; drag to reorder; duplicate a chart or a dashboard |
+| History | Every change is a version marked "by you" or "by the AI"; restore any version, undo after each AI edit |
+| Ask | Multi-turn questions with a live step trace, follow-up suggestions, highlighted figures and "Add to dashboard" |
+| Charts | Headline numbers, ranked bars, single or multi-series lines (a long result becomes one line per category) and tables, chosen by tested rules |
+| Navigate | Sidebar of dashboards, Ctrl+K or Cmd+K command palette, charts readable from the keyboard, light and dark themes |
+| Operate | Optional password, rate limits, a daily token budget, result caches and a health check |
 
 | | |
 | --- | --- |
-| ![A saved dashboard with filters](docs/dashboard.png) | ![The same dashboard filtered by link, in dark mode](docs/dashboard-dark.png) |
-| ![Ask a question and see the agent's work](docs/ask.png) | ![Command palette](docs/palette.png) |
+| ![A saved dashboard with its filters](docs/dashboard.png) | ![The same dashboard opened from a filtered link, in dark mode](docs/dashboard-dark.png) |
+| ![A question answered, with the agent's steps](docs/ask.png) | ![The command palette](docs/palette.png) |
 
-## Results
+## How it works
 
-> Not measured on a live model yet. Run `python -m sqlagent eval`, then replace this note with the score from `evals/results/<model>.md`.
+```mermaid
+flowchart LR
+    P[Request in plain language] --> AG[Dashboard agent]
+    AG <-->|schema, current dashboard, tool calls| L[LLM]
+    AG -->|add_tile, update_tile, set_filters...| D[Draft dashboard]
+    D -->|every chart's SQL| G[Guardrails]
+    G -->|SELECT only, 5 s, 200 rows| R[(Business data, read-only)]
+    AG -.->|each step and a live preview| UI[Browser]
+    D -->|one version per request| W[(Dashboards and versions)]
+    UI -->|filters| F[Filtered views of the tables] --> G
+```
 
-The harness itself is verified: `python -m sqlagent eval --oracle` replays the gold SQL through the full pipeline and must score 50/50.
+The agent does not write dashboards directly. It works on a draft through a small set of tools (add, update, move and remove a chart, add text, set filters, run a query to look at the data, finish or decline). Every chart it adds is executed through the guardrails and checked against its chart type before it is accepted; if a query fails or does not fit, the error goes back to the model, which corrects it. Each change is streamed to the page with its result, which is how the dashboard draws itself while the model works. The finished draft is saved once, as one version, so a single click undoes the whole request.
+
+Filters work on any chart without rewriting its SQL: the tables are replaced, for that query only, by filtered views of the same name. The design notes in [DESIGN.md](DESIGN.md) explain this and the other decisions in detail.
+
+The model provider is a setting. Two small HTTP adapters cover any OpenAI-compatible API (Groq, Gemini, OpenRouter, Ollama and others) and Claude. The frontend is plain ES modules and SVG with no build step and a strict Content-Security-Policy.
+
+## Accuracy
+
+> Not yet measured on a live model. Run `python -m sqlagent eval` and `python -m sqlagent eval-dashboards`, then replace this note with the scores from `evals/results/`.
+
+The question agent is scored on 50 reference questions with known correct SQL, and the dashboard agent on 14 dashboard requests with mechanical checks; both are described under [Evaluation](#evaluation). The scoring harness verifies itself: `python -m sqlagent eval --oracle` replays the reference SQL through the full pipeline and must score 50/50.
 
 ## Quick start
 
-Requires Python 3.11 or newer. The default provider is Groq, whose free plan needs no card.
+You need Python 3.11 or newer and an API key for a model provider. The default is Groq, whose free plan needs no card.
 
 ```bash
 git clone https://github.com/ali-chamas/olist-sql-agent.git
@@ -72,7 +86,7 @@ python -m sqlagent serve                    # http://127.0.0.1:8000
 python -m sqlagent ask "Which 5 product categories have the highest revenue?"
 ```
 
-Run the checks:
+Tests and evaluations:
 
 ```bash
 pytest -q                                   # 175 tests, no key and no data needed
@@ -97,7 +111,7 @@ Set `LLM_PROVIDER` in `.env`. Free-tier limits change often; check the provider'
 
 A question takes two to three model calls and roughly 3,000 to 4,000 tokens; building a dashboard takes four to eight calls. On a free tier with a per-minute token limit, the client waits and retries, and the page says so. The eval runner paces itself with `--tpm` and saves each finished case, so a run that hits a daily limit continues the next day with the same command.
 
-## How the Ask agent works
+## The question agent
 
 The model gets the full schema in its system prompt, plus business definitions that the column names do not carry (for example, `sales` has one row per order item, so "orders" means `COUNT(DISTINCT order_id)`). It has three tools:
 
@@ -109,9 +123,25 @@ The model gets the full schema in its system prompt, plus business definitions t
 
 SQL errors and guardrail refusals go back to the model as tool errors, so it can fix the query. The loop stops after `MAX_STEPS` model calls. For a follow-up question, the last three questions and their SQL are added to the prompt.
 
+## The dashboard agent
+
+The model gets the schema, the business rules and the current dashboard as JSON (each chart's id, title, type, width and SQL, plus the filters). It changes a draft through these tools:
+
+| Tool | What it does |
+| --- | --- |
+| `add_tile(title, sql, chart, size, note, position)` | Runs the SQL through the guardrails, checks the chart type fits the result, then adds the tile |
+| `update_tile(tile_id, ...)` | The same checks for a changed query or chart type |
+| `move_tile`, `remove_tile`, `update_dashboard` | Layout, title and description |
+| `add_text(title, text)` | A heading and short context, no query |
+| `set_filters(date_from, date_to, state, category)` | Limits the whole dashboard instead of editing every query |
+| `run_sql(sql)` | Look at the data before deciding |
+| `finish(summary)`, `cannot_do(reason)` | End the run |
+
+Every tool result ends with the current tile list, so the model works from the real state. Each successful change is streamed to the page with the rows the agent just checked, which is how the dashboard draws itself while the model works. The draft is saved once, as one version, with a summary built from the changes.
+
 ## Guardrails
 
-Every query, whether written by the model or typed into the SQL editor, passes four layers in `src/sqlagent/db.py`:
+A language model can be persuaded to write anything, so safety cannot depend on the prompt. Every query, whether written by the model or typed by a person, passes four layers in `src/sqlagent/db.py`:
 
 1. **Text check.** One statement, starting with `SELECT` or `WITH`. This gives a clear message; it is not the security boundary.
 2. **Read-only connection.** The database is opened with SQLite's `mode=ro`.
@@ -152,35 +182,21 @@ A dashboard has no single right answer, so each of the 14 cases in `evals/dashbo
 python -m sqlagent eval-dashboards --tpm 8000   # writes evals/results/dashboards-<model>.md
 ```
 
-## The dashboard agent
+## Deploying
 
-The model gets the schema, the business rules, and the current dashboard as JSON (tiles with their id, title, chart type, width and SQL, plus the filters). It changes a draft through tools:
+The repository includes a `Dockerfile` and a Render blueprint (`render.yaml`). The image builds the database at build time, so the container needs no volume, and it reports its health on `/api/health`.
 
-| Tool | What it does |
-| --- | --- |
-| `add_tile(title, sql, chart, size, note, position)` | Runs the SQL through the guardrails, checks the chart type fits the result, then adds the tile |
-| `update_tile(tile_id, ...)` | The same checks for a changed query or chart type |
-| `move_tile`, `remove_tile`, `update_dashboard` | Layout, title and description |
-| `add_text(title, text)` | A heading and short context, no query |
-| `set_filters(date_from, date_to, state, category)` | Limits the whole dashboard instead of editing every query |
-| `run_sql(sql)` | Look at the data before deciding |
-| `finish(summary)`, `cannot_do(reason)` | End the run |
+To run it on Render's free plan:
 
-Every tool result ends with the current tile list, so the model works from the real state. Each successful change is streamed to the page with the rows the agent just checked, which is how the dashboard draws itself while the model works. The draft is saved once, as one version, with a summary built from the changes.
-
-## Deploying a free public demo
-
-The repository includes a `Dockerfile` and a Render blueprint (`render.yaml`). The image builds the database at build time, so the container needs no volume.
-
-1. Push the repository to GitHub.
+1. Fork or push the repository to GitHub.
 2. On [Render](https://render.com), choose New, then Blueprint, and pick the repository.
-3. Enter your `LLM_API_KEY` when asked. Leave the plan on Free.
+3. Enter your `LLM_API_KEY` when asked, and optionally an `APP_PASSWORD`.
 
-What to expect on a free instance: it sleeps after about 15 minutes without traffic, and the first request after that takes around a minute. Opening dashboards works even when the day's model quota is spent, because it never calls the model.
+A free instance sleeps after about 15 minutes without traffic, and the first request after that takes around a minute. Opening and filtering dashboards keeps working when the day's model quota is spent, because it never calls the model.
 
 Saved dashboards live in `APP_DB_PATH` (default `data/app.db`), a separate writable SQLite file. Render's free plan has no persistent disk, so dashboards made there are lost on each redeploy or restart; attach a disk on a paid plan, or run it locally, to keep them.
 
-Settings that protect the key, all in `.env.example`: `DAILY_TOKEN_BUDGET`, `ASK_PER_MINUTE`, `QUERY_PER_MINUTE`, `CACHE_TTL_S`, `TRUST_PROXY`. Set `APP_PASSWORD` to require a password (HTTP Basic) for every page and API call; the health check stays open for the platform.
+Settings that protect the key and the data, all documented in `.env.example`: `APP_PASSWORD` requires a password for every page and API call (the health check stays open for the platform); `DAILY_TOKEN_BUDGET`, `ASK_PER_MINUTE` and `QUERY_PER_MINUTE` cap usage; `CACHE_TTL_S` sets how long answers are reused; `TRUST_PROXY` makes rate limits use the client address behind a proxy.
 
 ## Project layout
 
@@ -215,14 +231,21 @@ tests/                 175 Python tests and 22 JavaScript tests
 
 Design choices and trade-offs are in [DESIGN.md](DESIGN.md).
 
-## Limitations
+## Current limitations
 
 - One fixed schema of five tables. A larger schema would not fit in the prompt and needs retrieval.
 - SQLite, single process. The cache, rate limiter and token budget live in memory and reset on restart.
 - One shared workspace, no user accounts: everyone with the password can see and edit every dashboard. History records whether a change was made by a person or the AI, not which person.
 - Filters know three dimensions of this schema (period, customer state, product category). Another database needs its own filter definitions.
-- The reference questions are in English and were written by the same person as the prompt, so the score is optimistic for questions phrased very differently.
+- The reference questions are in English and were written by the same person as the prompt, so a score will be optimistic for questions phrased very differently.
 - Execution accuracy cannot tell a correct query from one that returns the right rows by coincidence.
+
+## Roadmap
+
+- Connect a team's own PostgreSQL database through a read-only role, with its schema, business rules and filters described in a configuration file instead of code.
+- User accounts, so history records who made each change and dashboards can be private or shared.
+- Scheduled delivery of a dashboard by email, and alerts when a number crosses a threshold.
+- Published scores for several models on both evaluations.
 
 ## Data
 
